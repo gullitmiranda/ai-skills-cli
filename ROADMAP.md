@@ -4,6 +4,14 @@ Planned features, improvements, and tech debt for ai-skills-cli.
 
 ## Planned Features
 
+- [ ] **Profiles** — git credential routing via `includeIf` per profile
+  - [ ] `config.json` with `default_profile` and `profiles` map (name -> repos_dir)
+  - [ ] `--profile <name>` flag on `add` to override default
+  - [ ] `ai-skills profile list` — show configured profiles
+  - [ ] `ai-skills profile default <name>` — set the default profile
+  - [ ] `ai-skills profile add <name> --repos-dir <path>` — register a new profile
+  - [ ] Repos cloned into `~/.ai-skills/repos/<profile>/<owner>/<repo>` so `includeIf` applies per profile
+  - [ ] Document required `includeIf` gitconfig entries in setup docs
 - [ ] `ai-skills publish` — commit and push local skill changes back to the source repository
 - [ ] `ai-skills diff` — show local modifications to installed skills vs source
 - [ ] `ai-skills link <local-path>` — symlink a local skill repo directly (skip clone)

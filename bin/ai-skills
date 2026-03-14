@@ -205,10 +205,10 @@ clone_or_update_repo() {
     git -C "$repo_dir" fetch --depth 1 origin "$ref" 2>/dev/null || \
       git -C "$repo_dir" fetch origin 2>/dev/null || \
       warn "Failed to fetch updates for $owner/$repo"
-    git -C "$repo_dir" checkout "$ref" -- 2>/dev/null || \
-      git -C "$repo_dir" checkout "origin/$ref" -- 2>/dev/null || true
-    git -C "$repo_dir" reset --hard "origin/$ref" 2>/dev/null || \
-      git -C "$repo_dir" reset --hard "$ref" 2>/dev/null || true
+    git -C "$repo_dir" checkout "$ref" -- &>/dev/null || \
+      git -C "$repo_dir" checkout "origin/$ref" -- &>/dev/null || true
+    git -C "$repo_dir" reset --hard "origin/$ref" &>/dev/null || \
+      git -C "$repo_dir" reset --hard "$ref" &>/dev/null || true
   else
     debug "Cloning $owner/$repo (ref=$ref)"
     mkdir -p "$repo_dir"

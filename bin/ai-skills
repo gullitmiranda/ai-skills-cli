@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly VERSION="0.1.0"
+readonly VERSION="0.2.0"
 readonly STATE_DIR="${AI_SKILLS_HOME:-$HOME/.ai-skills}"
 readonly MANIFEST="$STATE_DIR/manifest.json"
-readonly REPOS_DIR="$STATE_DIR/repos"
+readonly CONFIG_FILE="$STATE_DIR/config.json"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -42,6 +42,7 @@ DRY_RUN=false
 TARGET_AGENT=""
 FLAG_REF=""
 FLAG_PATH=""
+FLAG_PROFILE=""
 
 # --- Helpers ---
 
@@ -50,8 +51,55 @@ require_cmd() {
 }
 
 ensure_state_dir() {
-  mkdir -p "$STATE_DIR" "$REPOS_DIR"
+  mkdir -p "$STATE_DIR"
   [[ -f "$MANIFEST" ]] || write_manifest '{"version":1,"agents":[],"skills":{}}'
+  [[ -f "$CONFIG_FILE" ]] || echo '{"default_profile":"personal","profiles":{"personal":{}}}' | jq . > "$CONFIG_FILE"
+}
+
+# --- Config / Profiles ---
+
+read_config() {
+  cat "$CONFIG_FILE"
+}
+
+write_config() {
+  echo "$1" | jq . > "$CONFIG_FILE"
+}
+
+config_get() {
+  jq -r "$1" "$CONFIG_FILE" 2>/dev/null
+}
+
+get_default_profile() {
+  config_get '.default_profile // "personal"'
+}
+
+resolve_profile() {
+  local name="${FLAG_PROFILE:-$(get_default_profile)}"
+  local exists
+  exists="$(config_get ".profiles[\"$name\"] // empty")"
+  [[ -z "$exists" ]] && die "Profile not found: $name (run 'ai-skills profile list')"
+  echo "$name"
+}
+
+repos_dir_for_profile() {
+  local profile="$1"
+  local custom_dir
+  custom_dir="$(config_get ".profiles[\"$profile\"].repos_dir // empty")"
+  if [[ -n "$custom_dir" ]]; then
+    eval echo "$custom_dir"
+  else
+    echo "$STATE_DIR/repos/$profile"
+  fi
+}
+
+current_repos_dir() {
+  local profile
+  profile="$(resolve_profile)"
+  local dir
+  dir="$(repos_dir_for_profile "$profile")"
+  mkdir -p "$dir"
+  echo "$dir"
 }
 
 read_manifest() {
@@ -148,7 +196,9 @@ source_id() {
 
 clone_or_update_repo() {
   local owner="$1" repo="$2" ref="$3"
-  local repo_dir="$REPOS_DIR/$owner/$repo"
+  local repos_base
+  repos_base="$(current_repos_dir)"
+  local repo_dir="$repos_base/$owner/$repo"
 
   if [[ -d "$repo_dir/.git" ]]; then
     debug "Updating repo $owner/$repo"
@@ -724,6 +774,106 @@ cmd_self_uninstall() {
   echo ""
 }
 
+cmd_profile() {
+  local subcmd="${1:-}"
+  shift || true
+
+  ensure_state_dir
+
+  case "$subcmd" in
+    list)
+      echo ""
+      echo "$(_bold "ai-skills profiles")"
+      echo ""
+      local default_p
+      default_p="$(get_default_profile)"
+      local profiles
+      profiles="$(config_get '.profiles | keys[]')"
+      while IFS= read -r name; do
+        local dir
+        dir="$(repos_dir_for_profile "$name")"
+        local marker=""
+        [[ "$name" == "$default_p" ]] && marker=" $(_green "(default)")"
+        echo "  $(_bold "$name")$marker"
+        echo "    repos: $(_dim "$dir")"
+      done <<< "$profiles"
+      echo ""
+      ;;
+
+    default)
+      local name="${1:-}"
+      [[ -z "$name" ]] && die "Usage: ai-skills profile default <name>"
+      local exists
+      exists="$(config_get ".profiles[\"$name\"] // empty")"
+      [[ -z "$exists" ]] && die "Profile not found: $name"
+      local cfg
+      cfg="$(read_config)"
+      cfg="$(echo "$cfg" | jq --arg n "$name" '.default_profile = $n')"
+      write_config "$cfg"
+      info "Default profile set to $(_bold "$name")"
+      ;;
+
+    add)
+      local name="${1:-}"
+      [[ -z "$name" ]] && die "Usage: ai-skills profile add <name> [--repos-dir <path>]"
+      shift
+      local repos_dir=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --repos-dir) repos_dir="$2"; shift 2 ;;
+          *) die "Unknown option: $1" ;;
+        esac
+      done
+      local cfg
+      cfg="$(read_config)"
+      if [[ -n "$repos_dir" ]]; then
+        cfg="$(echo "$cfg" | jq --arg n "$name" --arg d "$repos_dir" '.profiles[$n] = {"repos_dir": $d}')"
+      else
+        cfg="$(echo "$cfg" | jq --arg n "$name" '.profiles[$n] = {}')"
+      fi
+      write_config "$cfg"
+      local dir
+      dir="$(repos_dir_for_profile "$name")"
+      info "Profile $(_bold "$name") added (repos: $dir)"
+      ;;
+
+    remove)
+      local name="${1:-}"
+      [[ -z "$name" ]] && die "Usage: ai-skills profile remove <name>"
+      local default_p
+      default_p="$(get_default_profile)"
+      [[ "$name" == "$default_p" ]] && die "Cannot remove the default profile. Change default first."
+      local cfg
+      cfg="$(read_config)"
+      cfg="$(echo "$cfg" | jq --arg n "$name" 'del(.profiles[$n])')"
+      write_config "$cfg"
+      info "Profile $(_bold "$name") removed"
+      ;;
+
+    ""|help)
+      cat <<PROF_EOF
+
+$(_bold "ai-skills profile") — manage git credential profiles
+
+$(_bold "SUBCOMMANDS")
+  list                       Show all profiles
+  default <name>             Set the default profile
+  add <name> [--repos-dir]   Add a new profile
+  remove <name>              Remove a profile
+
+$(_bold "EXAMPLES")
+  ai-skills profile list
+  ai-skills profile add work --repos-dir ~/.ai-skills/repos/work
+  ai-skills profile default work
+  ai-skills add owner/repo --profile work
+
+PROF_EOF
+      ;;
+
+    *) die "Unknown profile subcommand: $subcmd (run 'ai-skills profile help')" ;;
+  esac
+}
+
 cmd_help() {
   cat <<EOF
 
@@ -738,6 +888,12 @@ $(_bold "SKILL COMMANDS")
   update [source-id]  Re-fetch and reinstall skills (all or specific)
   list                Show installed skills from manifest
 
+$(_bold "PROFILES")
+  profile list        Show configured profiles
+  profile default     Set the default profile
+  profile add         Add a new profile
+  profile remove      Remove a profile
+
 $(_bold "DIAGNOSTICS")
   doctor              Check health of skills setup
 
@@ -749,6 +905,7 @@ $(_bold "OPTIONS")
   --agent <name>      Target a specific agent (cursor, claude, codex, pi-mono, copilot)
   --ref <ref>         Pin to a branch, tag, or commit SHA
   --path <path>       Specify a subpath within the repository
+  --profile <name>    Use a specific profile for this command
   --dry-run           Show what would happen without making changes
   --debug             Enable debug output
 
@@ -784,6 +941,7 @@ main() {
       --agent)    TARGET_AGENT="$2"; shift 2 ;;
       --ref)      FLAG_REF="$2"; shift 2 ;;
       --path)     FLAG_PATH="$2"; shift 2 ;;
+      --profile)  FLAG_PROFILE="$2"; shift 2 ;;
       --dry-run)  DRY_RUN=true; shift ;;
       --debug)    export AI_SKILLS_DEBUG=1; shift ;;
       --version)  echo "ai-skills v${VERSION}"; exit 0 ;;
@@ -807,6 +965,7 @@ main() {
     update)          cmd_update "$@" ;;
     remove)          cmd_remove "$@" ;;
     list)            cmd_list "$@" ;;
+    profile)         cmd_profile "$@" ;;
     doctor)          cmd_doctor "$@" ;;
     self-update)     cmd_self_update "$@" ;;
     self-uninstall)  cmd_self_uninstall "$@" ;;

@@ -1,0 +1,12 @@
+# Local state (manifest, lock, metadata)
+state/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo

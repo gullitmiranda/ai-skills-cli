@@ -1,0 +1,263 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ai-skills-cli installer
+# Run locally:  ./scripts/install
+# Run remotely: curl -sL <raw-url>/scripts/install | bash
+
+# --- Colors / output (matches main CLI) ---
+
+_red()    { printf '\033[0;31m%s\033[0m' "$*"; }
+_green()  { printf '\033[0;32m%s\033[0m' "$*"; }
+_yellow() { printf '\033[0;33m%s\033[0m' "$*"; }
+_bold()   { printf '\033[1m%s\033[0m' "$*"; }
+_dim()    { printf '\033[2m%s\033[0m' "$*"; }
+
+info()  { echo "  $(_green "✓") $*"; }
+warn()  { echo "  $(_yellow "⚠") $*" >&2; }
+err()   { echo "  $(_red "✗") $*" >&2; }
+die()   { err "$@"; exit 1; }
+
+# --- Defaults ---
+
+INSTALL_DIR="${HOME}/.local/bin"
+STATE_DIR="${AI_SKILLS_HOME:-$HOME/.ai-skills}"
+DO_BOOTSTRAP=true
+DO_DOCTOR=true
+ALIAS_NAME=""
+REPO_DIR=""
+
+# --- Flag parsing ---
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --no-bootstrap) DO_BOOTSTRAP=false; shift ;;
+    --no-doctor)    DO_DOCTOR=false; shift ;;
+    --alias)        ALIAS_NAME="$2"; shift 2 ;;
+    --install-dir)  INSTALL_DIR="$2"; shift 2 ;;
+    --help|-h)
+      cat <<EOF
+
+$(_bold "ai-skills installer")
+
+USAGE
+  ./scripts/install [options]
+
+OPTIONS
+  --no-doctor      Skip running 'ai-skills doctor' after install
+  --alias <name>   Create an alias symlink alongside ai-skills (e.g. --alias my-alias)
+  --install-dir    Override install directory (default: ~/.local/bin)
+  --help           Show this help message
+
+EOF
+      exit 0
+      ;;
+    -*) die "Unknown option: $1 (run './scripts/install --help')" ;;
+    *)  die "Unexpected argument: $1" ;;
+  esac
+done
+
+# --- Locate repo ---
+
+resolve_repo_dir() {
+  if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    REPO_DIR="$(cd "$script_dir/.." && pwd)"
+  fi
+
+  if [[ -z "$REPO_DIR" || ! -f "$REPO_DIR/bin/ai-skills" ]]; then
+    if [[ -d "$PWD/bin" && -f "$PWD/bin/ai-skills" ]]; then
+      REPO_DIR="$PWD"
+    else
+      die "Cannot locate ai-skills-cli repo. Run from the repo root or via ./scripts/install"
+    fi
+  fi
+}
+
+# --- Prerequisite checks ---
+
+check_bash_version() {
+  local major="${BASH_VERSINFO[0]:-0}"
+  if [[ "$major" -ge 4 ]]; then
+    info "bash: ${BASH_VERSION} (>= 4.0)"
+  else
+    err "bash: ${BASH_VERSION} (requires >= 4.0)"
+    echo "    Install with: $(_dim "brew install bash")"
+    return 1
+  fi
+}
+
+check_prerequisites() {
+  echo ""
+  echo "$(_bold "Checking prerequisites...")"
+  echo ""
+
+  local failures=0
+
+  check_bash_version || ((failures++))
+
+  for cmd in git jq; do
+    if command -v "$cmd" &>/dev/null; then
+      info "$cmd: $(command -v "$cmd")"
+    else
+      err "$cmd: not found"
+      ((failures++))
+    fi
+  done
+
+  if [[ $failures -gt 0 ]]; then
+    die "Missing $failures required prerequisite(s). Install them and re-run."
+  fi
+}
+
+# --- State directory ---
+
+setup_state_dir() {
+  echo ""
+  echo "$(_bold "Setting up state directory...")"
+  echo ""
+
+  if [[ -d "$STATE_DIR" ]]; then
+    info "State directory exists: $STATE_DIR"
+  else
+    mkdir -p "$STATE_DIR"
+    info "Created state directory: $STATE_DIR"
+  fi
+
+  mkdir -p "$STATE_DIR/cache"
+}
+
+# --- Symlink installation ---
+
+install_symlink() {
+  echo ""
+  echo "$(_bold "Installing CLI...")"
+  echo ""
+
+  mkdir -p "$INSTALL_DIR"
+
+  local source="$REPO_DIR/bin/ai-skills"
+  local target="$INSTALL_DIR/ai-skills"
+
+  if [[ -L "$target" ]]; then
+    local existing
+    existing="$(readlink "$target" 2>/dev/null || true)"
+    if [[ "$existing" == "$source" ]]; then
+      info "Symlink already correct: $target -> $source"
+    else
+      rm -f "$target"
+      ln -s "$source" "$target"
+      info "Updated symlink: $target -> $source"
+    fi
+  elif [[ -f "$target" ]]; then
+    warn "Existing file at $target (not a symlink). Replacing with symlink."
+    rm -f "$target"
+    ln -s "$source" "$target"
+    info "Created symlink: $target -> $source"
+  else
+    if ln -s "$source" "$target" 2>/dev/null; then
+      info "Created symlink: $target -> $source"
+    else
+      warn "Cannot create symlink. Copying binary instead."
+      cp "$source" "$target"
+      chmod +x "$target"
+      info "Copied: $source -> $target"
+    fi
+  fi
+
+  if [[ -n "$ALIAS_NAME" ]]; then
+    local alias_target="$INSTALL_DIR/$ALIAS_NAME"
+    if [[ -L "$alias_target" ]]; then
+      local existing
+      existing="$(readlink "$alias_target" 2>/dev/null || true)"
+      if [[ "$existing" == "$source" ]]; then
+        info "Alias symlink already correct: $alias_target -> $source"
+      else
+        rm -f "$alias_target"
+        ln -s "$source" "$alias_target"
+        info "Updated alias symlink: $alias_target -> $source"
+      fi
+    else
+      ln -s "$source" "$alias_target" 2>/dev/null || true
+      if [[ -L "$alias_target" ]]; then
+        info "Created alias symlink: $alias_target -> $source"
+      else
+        warn "Could not create $ALIAS_NAME alias symlink"
+      fi
+    fi
+  fi
+}
+
+# --- PATH check ---
+
+IN_PATH=false
+
+check_path() {
+  echo ""
+  echo "$(_bold "Checking PATH...")"
+  echo ""
+
+  if echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
+    info "$INSTALL_DIR is in PATH"
+    IN_PATH=true
+  else
+    warn "$INSTALL_DIR is NOT in PATH"
+    echo ""
+    echo "    Add to your shell profile ($(_dim "~/.zshrc") or $(_dim "~/.bashrc")):"
+    echo ""
+    echo "      $(_dim "export PATH=\"$INSTALL_DIR:\$PATH\"")"
+    echo ""
+    echo "    Then reload your shell and re-run: $(_dim "./scripts/install")"
+  fi
+}
+
+# --- Bootstrap & doctor ---
+
+run_bootstrap() {
+  if $DO_BOOTSTRAP; then
+    echo ""
+    echo "$(_bold "Running bootstrap...")"
+    "$REPO_DIR/bin/ai-skills" bootstrap
+  fi
+}
+
+run_doctor() {
+  if $DO_DOCTOR; then
+    echo ""
+    echo "$(_bold "Running doctor...")"
+    "$REPO_DIR/bin/ai-skills" doctor || true
+  fi
+}
+
+# --- Main ---
+
+main() {
+  echo ""
+  echo "$(_bold "ai-skills-cli installer")"
+  echo "  $(_dim "$(date -u +"%Y-%m-%dT%H:%M:%SZ")")"
+
+  resolve_repo_dir
+
+  check_prerequisites
+  setup_state_dir
+  install_symlink
+  check_path
+
+  if $IN_PATH; then
+    run_bootstrap
+    run_doctor
+    echo ""
+    echo "$(_bold "Installation complete!")"
+    echo ""
+    echo "  Run $(_bold "ai-skills help") to get started."
+  else
+    echo ""
+    echo "$(_bold "Installation paused.")"
+    echo ""
+    echo "  Fix your PATH first, then re-run this installer to finish bootstrap and doctor."
+  fi
+  echo ""
+}
+
+main

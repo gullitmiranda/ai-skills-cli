@@ -128,6 +128,8 @@ my-skills-repo/
 | pi-mono | `~/.agents/skills/` | Active |
 | Copilot | `~/.github/skills/` | Placeholder |
 
+> **Note:** Cursor can auto-import skills from other agents' directories (`.claude/`, `.codex/`) when "Include third-party Plugins, Skills, and other configs" is enabled in Cursor Settings. This may cause duplicate skill loading. If you use this toggle, consider installing common skills to one agent only (e.g. `--agent claude`) and letting Cursor pick them up via cross-loading. See [agent-adapters.md](docs/agent-adapters.md) for details.
+
 ## Repository Structure
 
 ```

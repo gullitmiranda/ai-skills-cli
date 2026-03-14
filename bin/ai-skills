@@ -161,12 +161,31 @@ clone_or_update_repo() {
       git -C "$repo_dir" reset --hard "$ref" 2>/dev/null || true
   else
     debug "Cloning $owner/$repo (ref=$ref)"
-    mkdir -p "$repo_dir"
-    git clone --depth 1 --branch "$ref" \
-      "https://github.com/$owner/$repo.git" "$repo_dir" 2>/dev/null || \
-    git clone --depth 1 \
-      "https://github.com/$owner/$repo.git" "$repo_dir" 2>/dev/null || \
-      die "Failed to clone $owner/$repo"
+    mkdir -p "$(dirname "$repo_dir")"
+    rm -rf "$repo_dir"
+
+    local clone_ok=false
+
+    if command -v gh &>/dev/null; then
+      debug "Trying gh repo clone (respects gh auth context)"
+      if gh repo clone "$owner/$repo" "$repo_dir" -- --depth 1 ${ref:+--branch "$ref"} 2>/dev/null; then
+        clone_ok=true
+      else
+        debug "gh clone failed, falling back to git"
+      fi
+    fi
+
+    if ! $clone_ok; then
+      local clone_err
+      if clone_err="$(git clone --depth 1 ${ref:+--branch "$ref"} \
+        "https://github.com/$owner/$repo.git" "$repo_dir" 2>&1)"; then
+        clone_ok=true
+      else
+        debug "git clone output: $clone_err"
+        die "Failed to clone $owner/$repo (run with --debug for details). If the repo is private, check that 'gh auth status' shows the right account."
+      fi
+    fi
+
     if [[ -n "$ref" && "$ref" != "main" && "$ref" != "master" ]]; then
       git -C "$repo_dir" checkout "$ref" 2>/dev/null || true
     fi

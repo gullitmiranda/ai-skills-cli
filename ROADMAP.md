@@ -31,6 +31,10 @@ Planned features, improvements, and tech debt for ai-skills-cli.
 - [ ] Copilot adapter is placeholder — confirm target path and discovery behavior
 - [ ] pi-mono adapter needs confirmation of official config path
 
+## Diagnostics
+
+- [ ] `ai-skills doctor` detect duplicate skills across agent directories (relevant when Cursor cross-loads from `.claude/` and `.codex/`)
+
 ## Nice to Have
 
 - [ ] Shell completions (bash, zsh, fish)

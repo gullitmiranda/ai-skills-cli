@@ -85,6 +85,19 @@ Every subdirectory under a matched path that contains a `SKILL.md` is treated as
 
 Other agents discover only from their own agent-specific path plus the shared locations (`.agents/skills/` and `skills/`).
 
+### Cursor cross-loading and duplicates
+
+Cursor has a setting **"Include third-party Plugins, Skills, and other configs"** (in Cursor Settings > Rules, Skills, Subagents) that controls whether it auto-imports from other agents' directories (`~/.claude/skills/`, `~/.codex/skills/`, etc.).
+
+- **Toggle ON** (default): Cursor loads skills from its own directory **and** other agents' directories. If `ai-skills` installed the same skill to both `~/.cursor/skills/` and `~/.claude/skills/`, Cursor will see it **twice**.
+- **Toggle OFF**: Cursor only loads from `~/.cursor/skills/`.
+
+If you use Cursor with this toggle enabled, consider either:
+- Installing common skills only to `~/.claude/skills/` (Cursor will pick them up automatically)
+- Or installing to `~/.cursor/skills/` only via `--agent cursor` and letting other agents get their own copies
+
+The `ai-skills` CLI installs to each configured agent independently. A future `ai-skills doctor` check may detect and warn about duplicates across agent directories.
+
 ## How to Organize a Skill Repository
 
 Use these conventions to maximize portability:

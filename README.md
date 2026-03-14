@@ -6,7 +6,7 @@ Built on the [Agent Skills](https://agentskills.io) open standard.
 
 ## How It Works
 
-Skill repositories on GitHub contain `SKILL.md` files following the [agentskills.io spec](https://agentskills.io/specification). The CLI clones them, discovers skills, and copies them into the right agent directories on your machine.
+Skill repositories on GitHub contain `SKILL.md` files following the [agentskills.io spec](https://agentskills.io/specification). The CLI clones them, discovers skills, and symlinks them into the right agent directories on your machine. Changes you make to installed skills propagate back to the source repo.
 
 ```
 GitHub                          Local machine

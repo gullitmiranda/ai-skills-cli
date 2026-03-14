@@ -4,7 +4,7 @@ set -euo pipefail
 readonly VERSION="0.1.0"
 readonly STATE_DIR="${AI_SKILLS_HOME:-$HOME/.ai-skills}"
 readonly MANIFEST="$STATE_DIR/manifest.json"
-readonly CACHE_DIR="$STATE_DIR/cache"
+readonly REPOS_DIR="$STATE_DIR/repos"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -50,7 +50,7 @@ require_cmd() {
 }
 
 ensure_state_dir() {
-  mkdir -p "$STATE_DIR" "$CACHE_DIR"
+  mkdir -p "$STATE_DIR" "$REPOS_DIR"
   [[ -f "$MANIFEST" ]] || write_manifest '{"version":1,"agents":[],"skills":{}}'
 }
 
@@ -148,43 +148,43 @@ source_id() {
 
 clone_or_update_repo() {
   local owner="$1" repo="$2" ref="$3"
-  local repo_cache="$CACHE_DIR/$owner/$repo"
+  local repo_dir="$REPOS_DIR/$owner/$repo"
 
-  if [[ -d "$repo_cache/.git" ]]; then
-    debug "Updating cached repo $owner/$repo"
-    git -C "$repo_cache" fetch --depth 1 origin "$ref" 2>/dev/null || \
-      git -C "$repo_cache" fetch origin 2>/dev/null || \
+  if [[ -d "$repo_dir/.git" ]]; then
+    debug "Updating repo $owner/$repo"
+    git -C "$repo_dir" fetch --depth 1 origin "$ref" 2>/dev/null || \
+      git -C "$repo_dir" fetch origin 2>/dev/null || \
       warn "Failed to fetch updates for $owner/$repo"
-    git -C "$repo_cache" checkout "$ref" -- 2>/dev/null || \
-      git -C "$repo_cache" checkout "origin/$ref" -- 2>/dev/null || true
-    git -C "$repo_cache" reset --hard "origin/$ref" 2>/dev/null || \
-      git -C "$repo_cache" reset --hard "$ref" 2>/dev/null || true
+    git -C "$repo_dir" checkout "$ref" -- 2>/dev/null || \
+      git -C "$repo_dir" checkout "origin/$ref" -- 2>/dev/null || true
+    git -C "$repo_dir" reset --hard "origin/$ref" 2>/dev/null || \
+      git -C "$repo_dir" reset --hard "$ref" 2>/dev/null || true
   else
     debug "Cloning $owner/$repo (ref=$ref)"
-    mkdir -p "$repo_cache"
+    mkdir -p "$repo_dir"
     git clone --depth 1 --branch "$ref" \
-      "https://github.com/$owner/$repo.git" "$repo_cache" 2>/dev/null || \
+      "https://github.com/$owner/$repo.git" "$repo_dir" 2>/dev/null || \
     git clone --depth 1 \
-      "https://github.com/$owner/$repo.git" "$repo_cache" 2>/dev/null || \
+      "https://github.com/$owner/$repo.git" "$repo_dir" 2>/dev/null || \
       die "Failed to clone $owner/$repo"
     if [[ -n "$ref" && "$ref" != "main" && "$ref" != "master" ]]; then
-      git -C "$repo_cache" checkout "$ref" 2>/dev/null || true
+      git -C "$repo_dir" checkout "$ref" 2>/dev/null || true
     fi
   fi
 
-  echo "$repo_cache"
+  echo "$repo_dir"
 }
 
 # --- Skill discovery ---
 
 discover_skills() {
-  local repo_cache="$1"
+  local repo_dir="$1"
   local subpath="$2"
   local agent="$3"
   local skills=()
 
   if [[ -n "$subpath" ]]; then
-    local full_path="$repo_cache/$subpath"
+    local full_path="$repo_dir/$subpath"
     if [[ -d "$full_path" ]]; then
       skills+=("$full_path")
     elif [[ -f "$full_path" ]]; then
@@ -197,7 +197,7 @@ discover_skills() {
   fi
 
   # Agent-specific skills
-  local agent_skill_dir="$repo_cache/.${agent}/skills"
+  local agent_skill_dir="$repo_dir/.${agent}/skills"
   if [[ -d "$agent_skill_dir" ]]; then
     for d in "$agent_skill_dir"/*/; do
       [[ -d "$d" ]] && skills+=("$d")
@@ -206,7 +206,7 @@ discover_skills() {
 
   # Common locations
   for prefix in ".agents/skills" "skills"; do
-    local dir="$repo_cache/$prefix"
+    local dir="$repo_dir/$prefix"
     if [[ -d "$dir" ]]; then
       for d in "$dir"/*/; do
         [[ -d "$d" ]] && skills+=("$d")
@@ -215,8 +215,8 @@ discover_skills() {
   done
 
   # Single SKILL.md at root
-  if [[ ${#skills[@]} -eq 0 && -f "$repo_cache/SKILL.md" ]]; then
-    skills+=("$repo_cache")
+  if [[ ${#skills[@]} -eq 0 && -f "$repo_dir/SKILL.md" ]]; then
+    skills+=("$repo_dir")
   fi
 
   if [[ ${#skills[@]} -eq 0 ]]; then
@@ -250,11 +250,13 @@ install_skill_to_agent() {
   fi
 
   mkdir -p "$dest"
-  if [[ -d "$target" ]]; then
+  if [[ -L "$target" ]]; then
+    rm -f "$target"
+  elif [[ -d "$target" ]]; then
     rm -rf "$target"
   fi
-  cp -R "$skill_dir" "$target"
-  info "Installed $(_bold "$skill_name") -> $agent"
+  ln -s "$skill_dir" "$target"
+  info "Installed $(_bold "$skill_name") -> $agent (symlink)"
 }
 
 update_manifest_skill() {
@@ -352,8 +354,8 @@ cmd_add() {
 
   debug "Parsed: owner=$owner repo=$repo ref=$ref path=$path"
 
-  local repo_cache
-  repo_cache="$(clone_or_update_repo "$owner" "$repo" "$ref")"
+  local repo_dir
+  repo_dir="$(clone_or_update_repo "$owner" "$repo" "$ref")"
 
   local agents
   mapfile -t agents < <(target_agents)
@@ -361,7 +363,7 @@ cmd_add() {
   local skill_dirs
   mapfile -t skill_dirs < <(
     for agent in "${agents[@]}"; do
-      discover_skills "$repo_cache" "$path" "$agent"
+      discover_skills "$repo_dir" "$path" "$agent"
     done | sort -u
   )
 
@@ -373,7 +375,7 @@ cmd_add() {
     [[ -z "$skill_dir" ]] && continue
     local skill_name
     skill_name="$(basename "$skill_dir")"
-    local relative_path="${skill_dir#$repo_cache/}"
+    local relative_path="${skill_dir#$repo_dir/}"
     [[ "$relative_path" == "$skill_dir" ]] && relative_path=""
 
     local sid
@@ -438,15 +440,15 @@ cmd_update() {
 
     echo "  Updating $(_bold "$sid") ..."
 
-    local repo_cache
-    repo_cache="$(clone_or_update_repo "$owner" "$repo" "$ref")"
+    local repo_dir
+    repo_dir="$(clone_or_update_repo "$owner" "$repo" "$ref")"
 
     local agents
     mapfile -t agents < <(echo "$skill_agents_json" | jq -r '.[]')
 
     for agent in "${agents[@]}"; do
       local skill_dirs
-      mapfile -t skill_dirs < <(discover_skills "$repo_cache" "$path" "$agent")
+      mapfile -t skill_dirs < <(discover_skills "$repo_dir" "$path" "$agent")
       for skill_dir in "${skill_dirs[@]}"; do
         [[ -z "$skill_dir" ]] && continue
         install_skill_to_agent "$skill_dir" "$agent" "$sid"

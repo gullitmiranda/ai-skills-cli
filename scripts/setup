@@ -125,7 +125,7 @@ setup_state_dir() {
     info "Created state directory: $STATE_DIR"
   fi
 
-  mkdir -p "$STATE_DIR/cache"
+  mkdir -p "$STATE_DIR/repos"
 }
 
 # --- Symlink installation ---

@@ -1,0 +1,84 @@
+# Agent adapter configuration for ai-skills CLI
+#
+# Follows the 2026 Agent Skills open standard (agentskills.io).
+#
+# Each agent defines:
+#   target_dir    - where skills are symlinked/copied on the local machine
+#   discovery     - ordered list of paths the CLI probes inside a skill repo
+#   status        - active | placeholder
+#   notes         - agent-specific caveats
+
+agents:
+  cursor:
+    target_dir: "~/.cursor/skills"
+    discovery:
+      - ".cursor/skills"
+      - ".claude/skills"
+      - ".codex/skills"
+      - ".agents/skills"
+      - "skills"
+    status: active
+    notes: >
+      Cursor reads skills via <available_skills> in project rules.
+      Each skill must contain a SKILL.md at its root.
+      Cursor also auto-discovers from .claude/skills/ and .codex/skills/
+      for cross-agent compatibility.
+
+  claude:
+    target_dir: "~/.claude/skills"
+    discovery:
+      - ".claude/skills"
+      - ".agents/skills"
+      - "skills"
+    status: active
+    notes: >
+      Claude Code loads skills from ~/.claude/skills/.
+      Each skill must contain a SKILL.md at its root.
+
+  codex:
+    target_dir: "~/.codex/skills"
+    discovery:
+      - ".codex/skills"
+      - ".agents/skills"
+      - "skills"
+    status: active
+    notes: >
+      Codex loads skills from ~/.codex/skills/.
+      Each skill must contain a SKILL.md at its root.
+
+  pi-mono:
+    target_dir: "~/.agents/skills"
+    discovery:
+      - ".pi/skills"
+      - ".agents/skills"
+      - "skills"
+    status: active
+    notes: >
+      Pi-mono uses the cross-agent standard path ~/.agents/skills/ as its
+      target directory. Discovers from .pi/skills/ for agent-specific content.
+
+  copilot:
+    target_dir: "~/.github/skills"
+    discovery:
+      - ".github/skills"
+      - ".agents/skills"
+      - "skills"
+    status: placeholder
+    notes: >
+      GitHub Copilot adapter is a placeholder. Target path ~/.github/skills/
+      is provisional and subject to change once Copilot finalizes its skill
+      loading mechanism.
+
+# Discovery order (applies to all agents):
+#
+#   1. .<agent>/skills/   — agent-specific skills
+#   2. .agents/skills/    — cross-agent standard location (agentskills.io)
+#   3. skills/            — fallback / simple repos
+#   4. SKILL.md at root   — single-skill repo (if nothing else found)
+#
+# Exception: Cursor additionally discovers from .claude/skills/ and
+# .codex/skills/ for cross-agent compatibility.
+#
+# The CLI walks these paths in order and collects every subdirectory
+# containing a SKILL.md. Duplicates across paths are deduplicated by
+# skill directory name.

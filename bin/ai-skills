@@ -6,7 +6,17 @@ readonly STATE_DIR="${AI_SKILLS_HOME:-$HOME/.ai-skills}"
 readonly MANIFEST="$STATE_DIR/manifest.json"
 readonly CONFIG_FILE="$STATE_DIR/config.json"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_resolve_source() {
+  local src="${BASH_SOURCE[0]}"
+  while [[ -L "$src" ]]; do
+    local dir="$(cd "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="$dir/$src"
+  done
+  echo "$src"
+}
+
+SCRIPT_DIR="$(cd "$(dirname "$(_resolve_source)")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # --- Agent adapter config ---
@@ -194,11 +204,61 @@ source_id() {
 
 # --- Git operations ---
 
+find_repo_in_other_profiles() {
+  local owner="$1" repo="$2" current_profile="$3"
+  local profiles
+  profiles="$(config_get '.profiles | keys[]')"
+  while IFS= read -r profile; do
+    [[ "$profile" == "$current_profile" ]] && continue
+    local dir
+    dir="$(repos_dir_for_profile "$profile")"
+    if [[ -d "$dir/$owner/$repo/.git" ]]; then
+      echo "$profile|$dir/$owner/$repo"
+      return 0
+    fi
+  done <<< "$profiles"
+  return 1
+}
+
+migrate_repo_between_profiles() {
+  local owner="$1" repo="$2" old_dir="$3" new_dir="$4"
+  mkdir -p "$(dirname "$new_dir")"
+  mv "$old_dir" "$new_dir"
+  info "Migrated $owner/$repo to current profile"
+
+  # Clean up empty parent dirs
+  local old_parent
+  old_parent="$(dirname "$old_dir")"
+  rmdir "$old_parent" 2>/dev/null || true
+}
+
 clone_or_update_repo() {
   local owner="$1" repo="$2" ref="$3"
   local repos_base
   repos_base="$(current_repos_dir)"
   local repo_dir="$repos_base/$owner/$repo"
+
+  if [[ ! -d "$repo_dir/.git" ]]; then
+    local other_match
+    if other_match="$(find_repo_in_other_profiles "$owner" "$repo" "$(resolve_profile)")"; then
+      local other_profile other_dir
+      IFS='|' read -r other_profile other_dir <<< "$other_match"
+      warn "$owner/$repo found in profile \"$other_profile\" instead of \"$(resolve_profile)\""
+      if [[ -t 0 ]]; then
+        printf "  Move to current profile? [y/N] " >&2
+        read -r answer </dev/tty
+        if [[ "$answer" =~ ^[Yy]$ ]]; then
+          migrate_repo_between_profiles "$owner" "$repo" "$other_dir" "$repo_dir"
+        else
+          warn "Keeping in \"$other_profile\". Symlinks will point to that profile."
+          repo_dir="$other_dir"
+        fi
+      else
+        warn "Non-interactive: skipping migration. Use: ai-skills add $owner/$repo --profile $(resolve_profile)"
+        repo_dir="$other_dir"
+      fi
+    fi
+  fi
 
   if [[ -d "$repo_dir/.git" ]]; then
     debug "Updating repo $owner/$repo"
@@ -303,7 +363,9 @@ install_skill_to_agent() {
   if [[ -L "$target" ]]; then
     rm -f "$target"
   elif [[ -d "$target" ]]; then
-    rm -rf "$target"
+    warn "$skill_name already exists as a real directory in $agent (not a symlink): $target"
+    warn "Skipping. Remove it manually first if you want ai-skills to manage it."
+    return
   fi
   ln -s "$skill_dir" "$target"
   info "Installed $(_bold "$skill_name") -> $agent (symlink)"
@@ -387,7 +449,18 @@ cmd_bootstrap() {
 }
 
 cmd_add() {
-  local source="${1:-}"
+  local source=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --agent)    TARGET_AGENT="$2"; shift 2 ;;
+      --ref)      FLAG_REF="$2"; shift 2 ;;
+      --path)     FLAG_PATH="$2"; shift 2 ;;
+      --profile)  FLAG_PROFILE="$2"; shift 2 ;;
+      --dry-run)  DRY_RUN=true; shift ;;
+      -*)         die "Unknown option: $1" ;;
+      *)          source="$1"; shift ;;
+    esac
+  done
   [[ -z "$source" ]] && die "Usage: ai-skills add <source>"
 
   echo ""
@@ -508,7 +581,7 @@ cmd_update() {
     if ! $DRY_RUN; then
       manifest_set ".skills[\"$sid\"].updated_at = \"$(now_iso)\""
     fi
-    ((updated++))
+    updated=$((updated + 1))
   done
 
   echo ""
@@ -521,72 +594,113 @@ cmd_doctor() {
   echo ""
 
   local issues=0
+  local fixes=()
 
-  # Check required tools
+  # --- Prerequisites ---
+
   for cmd in git jq; do
     if command -v "$cmd" &>/dev/null; then
       info "$cmd: available"
     else
       err "$cmd: not found"
-      ((issues++))
+      fixes+=("Install $cmd (e.g. brew install $cmd)")
+      issues=$((issues + 1))
     fi
   done
 
-  # Check gh auth (optional but useful)
   if command -v gh &>/dev/null; then
     if gh auth status &>/dev/null; then
       info "gh: authenticated"
     else
-      warn "gh: not authenticated (run 'gh auth login')"
-      ((issues++))
+      warn "gh: not authenticated"
+      fixes+=("gh auth login")
+      issues=$((issues + 1))
     fi
   else
     warn "gh: not installed (optional, needed for private repos)"
   fi
 
-  # Check state dir
+  # --- State ---
+
   if [[ -d "$STATE_DIR" ]]; then
     info "State directory: $STATE_DIR"
   else
-    warn "State directory missing: $STATE_DIR (run bootstrap)"
-    ((issues++))
+    warn "State directory missing"
+    fixes+=("ai-skills bootstrap")
+    issues=$((issues + 1))
   fi
 
-  # Check manifest
   if [[ -f "$MANIFEST" ]]; then
     if jq empty "$MANIFEST" 2>/dev/null; then
       info "Manifest: valid JSON"
     else
-      err "Manifest: invalid JSON"
-      ((issues++))
+      err "Manifest: corrupted"
+      fixes+=("echo '{\"version\":1,\"agents\":[],\"skills\":{}}' > $MANIFEST")
+      issues=$((issues + 1))
     fi
   else
-    warn "Manifest: not found (run bootstrap)"
-    ((issues++))
+    warn "Manifest: not found"
+    fixes+=("ai-skills bootstrap")
+    issues=$((issues + 1))
   fi
 
-  # Check agent directories
+  # --- Agent directories ---
+
   local agents
   mapfile -t agents < <(configured_agents)
   for agent in "${agents[@]}"; do
     local dir
     dir="$(agent_dir "$agent")"
-    if [[ -z "$dir" ]]; then
-      warn "Agent $agent: no directory configured"
-      ((issues++))
+    [[ -z "$dir" ]] && continue
+
+    if [[ ! -d "$dir" ]]; then
+      debug "Agent $agent: directory missing ($dir) — skipping"
       continue
     fi
-    if [[ -d "$dir" ]]; then
-      local count
-      count="$(find "$dir" -maxdepth 1 -type d ! -name "$(basename "$dir")" 2>/dev/null | wc -l | tr -d ' ')"
-      info "Agent $agent: $dir ($count skills)"
-    else
-      warn "Agent $agent: directory missing ($dir)"
-      ((issues++))
+
+    local symlinks=0 real_dirs=0 broken=0
+    local real_dir_names=() broken_names=()
+
+    for entry in "$dir"/*/; do
+      [[ -e "$entry" || -L "${entry%/}" ]] || continue
+      local entry_clean="${entry%/}"
+      if [[ -L "$entry_clean" ]]; then
+        local link_target
+        link_target="$(readlink "$entry_clean")"
+        if [[ -e "$link_target" ]]; then
+          symlinks=$((symlinks + 1))
+        else
+          broken=$((broken + 1))
+          broken_names+=("$(basename "$entry_clean")")
+        fi
+      elif [[ -d "$entry_clean" ]]; then
+        real_dirs=$((real_dirs + 1))
+        real_dir_names+=("$(basename "$entry_clean")")
+      fi
+    done
+
+    local total=$((symlinks + real_dirs + broken))
+    info "Agent $agent: $dir ($total skills, $symlinks managed)"
+
+    if [[ $broken -gt 0 ]]; then
+      warn "Agent $agent: $broken broken symlink(s): ${broken_names[*]}"
+      for name in "${broken_names[@]}"; do
+        fixes+=("rm $dir/$name  # broken symlink")
+      done
+      issues=$((issues + 1))
+    fi
+
+    if [[ $real_dirs -gt 0 ]]; then
+      warn "Agent $agent: $real_dirs unmanaged skill(s): ${real_dir_names[*]}"
+      for name in "${real_dir_names[@]}"; do
+        fixes+=("rm -rf $dir/$name  # unmanaged directory, remove if no longer needed")
+      done
+      issues=$((issues + 1))
     fi
   done
 
-  # Check installed skills in manifest vs filesystem
+  # --- Manifest vs filesystem ---
+
   if [[ -f "$MANIFEST" ]]; then
     local sids
     mapfile -t sids < <(manifest_get '.skills | keys[]' 2>/dev/null || true)
@@ -594,29 +708,43 @@ cmd_doctor() {
       [[ -z "$sid" ]] && continue
       local skill_agents
       mapfile -t skill_agents < <(manifest_get ".skills[\"$sid\"].agents[]" 2>/dev/null || true)
+      local missing_agents=()
       for agent in "${skill_agents[@]}"; do
         [[ -z "$agent" ]] && continue
         local dir skill_name target
         dir="$(agent_dir "$agent")"
         skill_name="$(basename "$sid")"
         target="$dir/$skill_name"
-        if [[ -d "$target" ]]; then
-          debug "Skill $sid -> $agent: OK"
-        else
-          warn "Skill $sid -> $agent: missing from filesystem"
-          ((issues++))
+        if [[ ! -e "$target" && ! -L "$target" ]]; then
+          missing_agents+=("$agent")
         fi
       done
+      if [[ ${#missing_agents[@]} -gt 0 ]]; then
+        local source
+        source="$(manifest_get ".skills[\"$sid\"].source" 2>/dev/null || echo "unknown")"
+        warn "Manifest entry $sid missing from: ${missing_agents[*]}"
+        fixes+=("ai-skills add $source  # reinstall to fix missing skill")
+        issues=$((issues + 1))
+      fi
     done
   fi
+
+  # --- Summary ---
 
   echo ""
   if [[ $issues -eq 0 ]]; then
     info "All checks passed"
   else
     warn "$issues issue(s) found"
+    echo ""
+    echo "  $(_bold "How to fix:")"
+    echo ""
+    for fix in "${fixes[@]}"; do
+      echo "    $(_dim "$fix")"
+    done
   fi
 
+  echo ""
   return $issues
 }
 
@@ -675,7 +803,7 @@ cmd_self_update() {
 
   if [[ -x "$REPO_DIR/scripts/setup" ]]; then
     info "Re-running setup..."
-    exec "$REPO_DIR/scripts/setup" --no-bootstrap --no-doctor
+    exec "$REPO_DIR/scripts/setup" --no-doctor
   fi
 }
 

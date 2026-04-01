@@ -193,6 +193,38 @@ parse_github_source() {
   echo "$owner|$repo|$ref|$path"
 }
 
+is_local_path() {
+  local input="$1"
+  [[ "$input" == /* || "$input" == ~* || "$input" == ./* || "$input" == ../* || "$input" == . || "$input" == .. ]]
+}
+
+resolve_local_repo() {
+  local input="$1"
+  input="${input/#\~/$HOME}"
+  local abs_path
+  abs_path="$(cd "$input" 2>/dev/null && pwd)" || die "Directory not found: $input"
+
+  [[ -d "$abs_path/.git" ]] || die "Not a git repository: $abs_path"
+
+  local remote_url owner="" repo=""
+  remote_url="$(git -C "$abs_path" remote get-url origin 2>/dev/null || true)"
+
+  if [[ -n "$remote_url" ]]; then
+    remote_url="${remote_url%.git}"
+    if [[ "$remote_url" =~ github\.com[:/]([^/]+)/([^/]+)$ ]]; then
+      owner="${BASH_REMATCH[1]}"
+      repo="${BASH_REMATCH[2]}"
+    fi
+  fi
+
+  if [[ -z "$owner" || -z "$repo" ]]; then
+    repo="$(basename "$abs_path")"
+    owner="$(basename "$(dirname "$abs_path")")"
+  fi
+
+  echo "$abs_path|$owner|$repo"
+}
+
 source_id() {
   local owner="$1" repo="$2" path="$3"
   if [[ -n "$path" ]]; then
@@ -287,6 +319,14 @@ clone_or_update_repo() {
 
 # --- Skill discovery ---
 
+_find_skill_dirs() {
+  local base="$1"
+  [[ -d "$base" ]] || return
+  while IFS= read -r skill_md; do
+    dirname "$skill_md"
+  done < <(find "$base" -name SKILL.md -type f 2>/dev/null)
+}
+
 discover_skills() {
   local repo_dir="$1"
   local subpath="$2"
@@ -296,7 +336,8 @@ discover_skills() {
   if [[ -n "$subpath" ]]; then
     local full_path="$repo_dir/$subpath"
     if [[ -d "$full_path" ]]; then
-      skills+=("$full_path")
+      mapfile -t -O "${#skills[@]}" skills < <(_find_skill_dirs "$full_path")
+      [[ ${#skills[@]} -eq 0 ]] && skills+=("$full_path")
     elif [[ -f "$full_path" ]]; then
       skills+=("$(dirname "$full_path")")
     else
@@ -307,21 +348,11 @@ discover_skills() {
   fi
 
   # Agent-specific skills
-  local agent_skill_dir="$repo_dir/.${agent}/skills"
-  if [[ -d "$agent_skill_dir" ]]; then
-    for d in "$agent_skill_dir"/*/; do
-      [[ -d "$d" ]] && skills+=("$d")
-    done
-  fi
+  mapfile -t -O "${#skills[@]}" skills < <(_find_skill_dirs "$repo_dir/.${agent}/skills")
 
   # Common locations
   for prefix in ".agents/skills" "skills"; do
-    local dir="$repo_dir/$prefix"
-    if [[ -d "$dir" ]]; then
-      for d in "$dir"/*/; do
-        [[ -d "$d" ]] && skills+=("$d")
-      done
-    fi
+    mapfile -t -O "${#skills[@]}" skills < <(_find_skill_dirs "$repo_dir/$prefix")
   done
 
   # Single SKILL.md at root
@@ -372,8 +403,8 @@ install_skill_to_agent() {
 }
 
 update_manifest_skill() {
-  local sid="$1" owner="$2" repo="$3" path="$4" ref="$5"
-  shift 5
+  local sid="$1" source_str="$2" path="$3" ref="$4"
+  shift 4
   local agents_json="[]"
 
   for a in "$@"; do
@@ -387,7 +418,7 @@ update_manifest_skill() {
 
   manifest_set "
     .skills[\"$sid\"] = {
-      \"source\": \"github.com/$owner/$repo\",
+      \"source\": \"$source_str\",
       \"path\": \"$path\",
       \"ref\": \"$ref\",
       \"agents\": $agents_json,
@@ -436,7 +467,7 @@ cmd_bootstrap() {
 
     local sid="core/$skill_name"
     if ! $DRY_RUN; then
-      update_manifest_skill "$sid" "local" "ai-skills-cli" "skills/core/$skill_name" "local" "${agents[@]}"
+      update_manifest_skill "$sid" "local/ai-skills-cli" "skills/core/$skill_name" "local" "${agents[@]}"
     fi
   done
 
@@ -471,14 +502,24 @@ cmd_add() {
   require_cmd jq
   ensure_state_dir
 
-  local parsed owner repo ref path
-  parsed="$(parse_github_source "$source")"
-  IFS='|' read -r owner repo ref path <<< "$parsed"
+  local repo_dir owner repo ref path source_str
 
-  debug "Parsed: owner=$owner repo=$repo ref=$ref path=$path"
-
-  local repo_dir
-  repo_dir="$(clone_or_update_repo "$owner" "$repo" "$ref")"
+  if is_local_path "$source"; then
+    local resolved
+    resolved="$(resolve_local_repo "$source")"
+    IFS='|' read -r repo_dir owner repo <<< "$resolved"
+    ref="local"
+    path="${FLAG_PATH:-}"
+    source_str="local:$repo_dir"
+    debug "Local repo: dir=$repo_dir owner=$owner repo=$repo path=$path"
+  else
+    local parsed
+    parsed="$(parse_github_source "$source")"
+    IFS='|' read -r owner repo ref path <<< "$parsed"
+    debug "Parsed: owner=$owner repo=$repo ref=$ref path=$path"
+    repo_dir="$(clone_or_update_repo "$owner" "$repo" "$ref")"
+    source_str="github.com/$owner/$repo"
+  fi
 
   local agents
   mapfile -t agents < <(target_agents)
@@ -509,7 +550,7 @@ cmd_add() {
     done
 
     if ! $DRY_RUN; then
-      update_manifest_skill "$sid" "$owner" "$repo" "$relative_path" "$ref" "${agents[@]}"
+      update_manifest_skill "$sid" "$source_str" "$relative_path" "$ref" "${agents[@]}"
     fi
   done
 
@@ -551,20 +592,23 @@ cmd_update() {
     path="$(manifest_get ".skills[\"$sid\"].path")"
     skill_agents_json="$(manifest_get ".skills[\"$sid\"].agents")"
 
-    # Skip local/core skills (re-run bootstrap for those)
     if [[ "$source" == "local/ai-skills-cli" ]]; then
-      debug "Skipping local skill: $sid (use bootstrap to update)"
+      debug "Skipping core skill: $sid (use bootstrap to update)"
       continue
     fi
-
-    local owner repo
-    owner="$(echo "$source" | sed 's|github.com/||' | cut -d/ -f1)"
-    repo="$(echo "$source" | sed 's|github.com/||' | cut -d/ -f2)"
 
     echo "  Updating $(_bold "$sid") ..."
 
     local repo_dir
-    repo_dir="$(clone_or_update_repo "$owner" "$repo" "$ref")"
+    if [[ "$source" == local:* ]]; then
+      repo_dir="${source#local:}"
+      [[ -d "$repo_dir" ]] || { warn "Local repo missing: $repo_dir — skipping $sid"; continue; }
+    else
+      local owner repo
+      owner="$(echo "$source" | sed 's|github.com/||' | cut -d/ -f1)"
+      repo="$(echo "$source" | sed 's|github.com/||' | cut -d/ -f2)"
+      repo_dir="$(clone_or_update_repo "$owner" "$repo" "$ref")"
+    fi
 
     local agents
     mapfile -t agents < <(echo "$skill_agents_json" | jq -r '.[]')
@@ -1011,7 +1055,7 @@ $(_bold "USAGE")
   ai-skills <command> [options]
 
 $(_bold "SKILL COMMANDS")
-  add <source>        Install skill(s) from a GitHub repository
+  add <source>        Install skill(s) from a GitHub repo or local path
   remove <source-id>  Remove an installed skill from agents and manifest
   update [source-id]  Re-fetch and reinstall skills (all or specific)
   list                Show installed skills from manifest

@@ -33,7 +33,14 @@ Planned features, improvements, and tech debt for ai-skills-cli.
 
 ## Diagnostics
 
-- [ ] `ai-skills doctor` detect duplicate skills across agent directories (relevant when Cursor cross-loads from `.claude/` and `.codex/`)
+Doctor should be **actionable** — every warning must include a fix command or instruction.
+
+- [ ] Detect broken symlinks and suggest: `ai-skills add <source> --profile <profile>` to fix
+- [ ] Detect stale manifest entries (skill in manifest but missing from filesystem) and suggest: `ai-skills remove <source-id>` or reinstall
+- [ ] Detect skills installed in wrong profile (clone in different profile than expected) and suggest migration
+- [ ] Detect duplicate skills across agent directories (Cursor cross-loading from `.claude/` and `.codex/`)
+- [ ] Detect uncommitted changes in cloned repos and warn before update
+- [ ] Show a summary section "How to fix" at the end with copy-pasteable commands
 
 ## Nice to Have
 

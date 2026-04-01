@@ -25,11 +25,13 @@ declare -A AGENT_DIRS=(
   [cursor]="$HOME/.cursor/skills"
   [claude]="$HOME/.claude/skills"
   [codex]="$HOME/.codex/skills"
+  [factory]="$HOME/.factory/skills"
   [pi-mono]="$HOME/.agents/skills"
   [copilot]="$HOME/.github/skills"
 )
 
-readonly SUPPORTED_AGENTS=("cursor" "claude" "codex" "pi-mono" "copilot")
+readonly SUPPORTED_AGENTS=("cursor" "claude" "codex" "factory" "pi-mono" "copilot")
+readonly DEFAULT_AGENTS=("cursor" "claude" "factory")
 
 # --- Colors / output ---
 
@@ -140,8 +142,7 @@ configured_agents() {
   local agents
   agents="$(manifest_get '.agents // [] | .[]' 2>/dev/null)" || true
   if [[ -z "$agents" ]]; then
-    echo "cursor"
-    echo "claude"
+    printf '%s\n' "${DEFAULT_AGENTS[@]}"
   else
     echo "$agents"
   fi
@@ -445,9 +446,21 @@ cmd_bootstrap() {
   fi
 
   local agents
-  mapfile -t agents < <(target_agents)
+  if [[ -n "$TARGET_AGENT" ]]; then
+    agents=("$TARGET_AGENT")
+  else
+    # Merge existing manifest agents with defaults (preserving order, deduplicating)
+    local existing_agents=()
+    mapfile -t existing_agents < <(manifest_get '.agents // [] | .[]' 2>/dev/null || true)
+    declare -A seen
+    agents=()
+    for a in "${existing_agents[@]}" "${DEFAULT_AGENTS[@]}"; do
+      [[ -z "$a" || -n "${seen[$a]:-}" ]] && continue
+      seen[$a]=1
+      agents+=("$a")
+    done
+  fi
 
-  # Ensure agents list is in manifest
   local agents_json="[]"
   for a in "${agents[@]}"; do
     agents_json="$(echo "$agents_json" | jq --arg a "$a" '. + [$a]')"
@@ -1074,7 +1087,7 @@ $(_bold "MAINTENANCE")
   self-uninstall      Remove CLI symlinks and optionally state directory
 
 $(_bold "OPTIONS")
-  --agent <name>      Target a specific agent (cursor, claude, codex, pi-mono, copilot)
+  --agent <name>      Target a specific agent (cursor, claude, codex, factory, pi-mono, copilot)
   --ref <ref>         Pin to a branch, tag, or commit SHA
   --path <path>       Specify a subpath within the repository
   --profile <name>    Use a specific profile for this command

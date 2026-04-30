@@ -235,6 +235,25 @@ source_id() {
   fi
 }
 
+source_type_for_manifest_source() {
+  local source="$1"
+  case "${source}" in
+    local:*) echo "local-worktree" ;;
+    github.com/*) echo "remote-git" ;;
+    "") echo "unknown" ;;
+    *) echo "unknown" ;;
+  esac
+}
+
+install_mode_for_source_type() {
+  local source_type="$1"
+  case "${source_type}" in
+    local-worktree) echo "direct-link" ;;
+    remote-git|local-cache) echo "cached-link" ;;
+    *) echo "unknown" ;;
+  esac
+}
+
 # --- Git operations ---
 
 find_repo_in_other_profiles() {
@@ -305,11 +324,14 @@ clone_or_update_repo() {
   else
     debug "Cloning $owner/$repo (ref=$ref)"
     mkdir -p "$repo_dir"
-    git clone --depth 1 --branch "$ref" \
-      "https://github.com/$owner/$repo.git" "$repo_dir" 2>/dev/null || \
-    git clone --depth 1 \
-      "https://github.com/$owner/$repo.git" "$repo_dir" 2>/dev/null || \
-      die "Failed to clone $owner/$repo"
+    if ! git clone --depth 1 --branch "${ref}" \
+      "https://github.com/${owner}/${repo}.git" "${repo_dir}" 2>/dev/null &&
+      ! git clone --depth 1 \
+        "https://github.com/${owner}/${repo}.git" "${repo_dir}" 2>/dev/null; then
+      rm -rf "${repo_dir}"
+      rmdir "$(dirname "${repo_dir}")" 2>/dev/null || true
+      die "Failed to clone ${owner}/${repo}"
+    fi
     if [[ -n "$ref" && "$ref" != "main" && "$ref" != "master" ]]; then
       git -C "$repo_dir" checkout "$ref" 2>/dev/null || true
     fi
@@ -515,7 +537,7 @@ cmd_add() {
   require_cmd jq
   ensure_state_dir
 
-  local repo_dir owner repo ref path source_str
+  local repo_dir owner repo ref path source_str source_type install_mode
 
   if is_local_path "$source"; then
     local resolved
@@ -524,12 +546,16 @@ cmd_add() {
     ref="local"
     path="${FLAG_PATH:-}"
     source_str="local:$repo_dir"
-    debug "Local repo: dir=$repo_dir owner=$owner repo=$repo path=$path"
+    source_type="local-worktree"
+    install_mode="$(install_mode_for_source_type "${source_type}")"
+    debug "Local repo: dir=${repo_dir} owner=${owner} repo=${repo} path=${path} source_type=${source_type} install_mode=${install_mode}"
   else
     local parsed
     parsed="$(parse_github_source "$source")"
     IFS='|' read -r owner repo ref path <<< "$parsed"
-    debug "Parsed: owner=$owner repo=$repo ref=$ref path=$path"
+    source_type="remote-git"
+    install_mode="$(install_mode_for_source_type "${source_type}")"
+    debug "Parsed: owner=${owner} repo=${repo} ref=${ref} path=${path} source_type=${source_type} install_mode=${install_mode}"
     repo_dir="$(clone_or_update_repo "$owner" "$repo" "$ref")"
     source_str="github.com/$owner/$repo"
   fi
@@ -613,14 +639,25 @@ cmd_update() {
     echo "  Updating $(_bold "$sid") ..."
 
     local repo_dir
-    if [[ "$source" == local:* ]]; then
+    local source_type install_mode
+    source_type="$(source_type_for_manifest_source "${source}")"
+    install_mode="$(install_mode_for_source_type "${source_type}")"
+    debug "Manifest source: sid=${sid} source_type=${source_type} install_mode=${install_mode}"
+
+    if [[ "${source_type}" == "local-worktree" ]]; then
       repo_dir="${source#local:}"
-      [[ -d "$repo_dir" ]] || { warn "Local repo missing: $repo_dir — skipping $sid"; continue; }
-    else
+      if [[ ! -d "${repo_dir}" ]]; then
+        warn "Local repo missing: ${repo_dir} — skipping ${sid}"
+        continue
+      fi
+    elif [[ "${source_type}" == "remote-git" || "${source_type}" == "local-cache" ]]; then
       local owner repo
-      owner="$(echo "$source" | sed 's|github.com/||' | cut -d/ -f1)"
-      repo="$(echo "$source" | sed 's|github.com/||' | cut -d/ -f2)"
-      repo_dir="$(clone_or_update_repo "$owner" "$repo" "$ref")"
+      owner="$(echo "${source}" | sed 's|github.com/||' | cut -d/ -f1)"
+      repo="$(echo "${source}" | sed 's|github.com/||' | cut -d/ -f2)"
+      repo_dir="$(clone_or_update_repo "${owner}" "${repo}" "${ref}")"
+    else
+      warn "Unknown source type for ${sid}: ${source} — skipping"
+      continue
     fi
 
     local agents

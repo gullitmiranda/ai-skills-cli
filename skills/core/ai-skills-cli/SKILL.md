@@ -114,14 +114,14 @@ Initializes agent directories and installs core skills from the CLI repo.
 
 ## Global Flags
 
-| Flag | Description |
-|------|-------------|
-| `--agent <name>` | Target a specific agent: `cursor`, `claude`, `codex`, `pi-mono`, `copilot` |
-| `--ref <ref>` | Pin to branch, tag, or commit SHA |
-| `--path <path>` | Subpath within the repository |
-| `--profile <name>` | Override active auth profile |
-| `--dry-run` | Preview actions without making changes |
-| `--debug` | Enable verbose debug output |
+| Flag               | Description                                                                |
+| ------------------ | -------------------------------------------------------------------------- |
+| `--agent <name>`   | Target a specific agent: `cursor`, `claude`, `codex`, `pi-mono`, `copilot` |
+| `--ref <ref>`      | Pin to branch, tag, or commit SHA                                          |
+| `--path <path>`    | Subpath within the repository                                              |
+| `--profile <name>` | Override active auth profile                                               |
+| `--dry-run`        | Preview actions without making changes                                     |
+| `--debug`          | Enable verbose debug output                                                |
 
 ## Source Formats
 
@@ -139,8 +139,10 @@ The `add` command accepts these formats:
 - Config: `~/.ai-skills/config.json` - profiles and settings
 - Cloned repos: `~/.ai-skills/repos/<profile>/<owner>/<repo>/`
 
-Skills are installed as **symlinks** from agent directories to the cloned repos,
-so edits propagate back to the source.
+Skills are installed as **symlinks** from agent directories to the cloned repos.
+The cloned repos under `~/.ai-skills/repos/` are a managed cache, not a working
+repo: do not commit or push from there. See the `ai-skills-cache-safety` core
+skill for the full rule and redirect procedure.
 
 ## Skill Discovery Order
 
@@ -178,9 +180,9 @@ ai-skills profile default personal   # switch back
 
 ## Troubleshooting
 
-| Symptom | Fix |
-|---------|-----|
-| `jq: not found` | Install jq: `brew install jq` |
-| `Failed to clone` | Check `gh auth status` or verify repo URL |
-| Skill missing after update | Run `ai-skills doctor` to find broken symlinks |
+| Symptom                    | Fix                                                                                      |
+| -------------------------- | ---------------------------------------------------------------------------------------- |
+| `jq: not found`            | Install jq: `brew install jq`                                                            |
+| `Failed to clone`          | Check `gh auth status` or verify repo URL                                                |
+| Skill missing after update | Run `ai-skills doctor` to find broken symlinks                                           |
 | Duplicate skills in Cursor | Use `--agent cursor` or `--agent claude` (not both) when Cursor cross-loading is enabled |

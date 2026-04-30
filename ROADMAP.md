@@ -5,9 +5,10 @@ Planned features, improvements, and tech debt for ai-skills-cli.
 ## Planned Features
 
 - [ ] **Cache Edit Guardrails** — make it impossible (or loudly obvious) to commit/push directly inside `~/.ai-skills/repos/<profile>/<owner>/<repo>/`. Today, agents and humans can — and do — edit through symlinks (e.g. `~/.cursor/skills/<name>`), commit on the cache repo, and even push to the upstream from there. The cache is meant to be a managed clone, not a working repo. Required pieces:
-  - [ ] On clone (in `ai-skills add`), drop a `.ai-skills-cache` marker file at the cached repo root with metadata (source URL, profile, cached-at). Skills/agents can detect this with a single `test -f .ai-skills-cache` check.
-  - [ ] On clone, install a `pre-commit` hook in the cache repo's `.git/hooks/` that aborts with an actionable message ("use `ai-skills publish` or edit in the source clone; bypass with `--no-verify` if you really mean it").
-  - [ ] `ai-skills publish <repo>` — supported escape hatch (see below) so the hook has a real alternative to point users to.
+  - [x] Core skill `skills/core/ai-skills-cache-safety/SKILL.md` shipped via `ai-skills bootstrap`: agent-side rule that detects cache paths (prefix + `.ai-skills-cache` marker) and refuses git writes with a redirect procedure.
+  - [ ] On clone (in `ai-skills add`), drop a `.ai-skills-cache` marker file at the cached repo root with metadata (source URL, profile, cached-at). The marker is also what the core skill above keys off when the path prefix check is ambiguous.
+  - [ ] On clone, install a `pre-commit` hook in the cache repo's `.git/hooks/` that aborts with an actionable message ("use `ai-skills publish` or edit in the source clone; bypass with `--no-verify` if you really mean it"). Tool-side enforcement to back up the agent-side skill.
+  - [ ] `ai-skills publish <repo>` — supported escape hatch (see below) so the hook and core skill have a real alternative to point users to.
   - [ ] `ai-skills link <local-path>` — primary fix (see below) so symlinks point at the user's own clone instead of the cache.
   - [ ] Doctor checks (see Diagnostics) round out the system by surfacing existing drift before damage spreads.
 - [ ] **Profiles** — git credential routing via `includeIf` per profile

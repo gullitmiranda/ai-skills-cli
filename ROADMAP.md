@@ -32,6 +32,7 @@ Planned features, improvements, and tech debt for ai-skills-cli.
 - [ ] Agent adapter config (`config/agents.yaml`) is not consumed by the CLI yet — discovery paths are hardcoded in `discover_skills()`
 - [ ] `scripts/setup` duplicates color/output helpers from `bin/ai-skills` — extract shared lib
 - [ ] `skills/core/` is empty — define what core skills ship with the CLI
+- [ ] `ai-skills add --ref <ref>` does not enforce the requested ref against an existing cache clone. If a previous `ai-skills add` cloned the default branch (e.g. `main`) and the next call passes `--ref v3-beta`, the cache stays on `main`, the skill discovery walks the wrong tree, and the install silently fails with a misleading "no skills found" message. Repro: clone `cloudwalk/github-builder` (skills live on `v3-beta`) without `--ref`, then retry with `--ref v3-beta`. Workaround today: `rm -rf ~/.ai-skills/repos/<profile>/<owner>/<repo>` and re-run with `--ref`. Fix should `git fetch origin <ref>` + `git checkout <ref>` (or `--force`) when an existing cache repo's HEAD does not match the requested ref.
 
 ## Future Agents
 

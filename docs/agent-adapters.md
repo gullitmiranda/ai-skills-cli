@@ -55,25 +55,27 @@ skill-name/
 
 ## Supported Agents
 
-| Agent | Target Directory | Status | Notes |
-|-------|-----------------|--------|-------|
-| cursor | `~/.cursor/skills/` | Active | Also reads `.claude/` and `.codex/` skills |
-| claude | `~/.claude/skills/` | Active | Claude Code |
-| codex | `~/.codex/skills/` | Active | Codex CLI |
-| pi-mono | `~/.agents/skills/` | Active | Uses cross-agent standard path |
-| copilot | `~/.github/skills/` | Placeholder | Provisional path |
+| Agent   | Target Directory     | Status      | Notes                                                                                                                                                                                        |
+| ------- | -------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| agents  | `~/.agents/skills/`  | Active      | Cross-client convention from [agentskills.io](https://agentskills.io/client-implementation/adding-skills-support#step-1-discover-skills). Native target for pi-mono. Legacy alias: `pi-mono` |
+| cursor  | `~/.cursor/skills/`  | Active      | Also reads `.claude/` and `.codex/` skills                                                                                                                                                   |
+| claude  | `~/.claude/skills/`  | Active      | Claude Code                                                                                                                                                                                  |
+| codex   | `~/.codex/skills/`   | Active      | Codex CLI                                                                                                                                                                                    |
+| factory | `~/.factory/skills/` | Active      | Factory CLI                                                                                                                                                                                  |
+| copilot | `~/.github/skills/`  | Placeholder | Provisional path                                                                                                                                                                             |
 
 ## Skill Discovery Paths
 
 When installing from a repository, the CLI probes paths in order for each agent:
 
-| Agent | Priority 1 | Priority 2 | Priority 3 | Priority 4 | Fallback |
-|-------|-----------|-----------|-----------|-----------|----------|
-| cursor | `.cursor/skills/` | `.claude/skills/` | `.codex/skills/` | `.agents/skills/` | `skills/` |
-| claude | `.claude/skills/` | `.agents/skills/` | `skills/` | — | — |
-| codex | `.codex/skills/` | `.agents/skills/` | `skills/` | — | — |
-| pi-mono | `.pi/skills/` | `.agents/skills/` | `skills/` | — | — |
-| copilot | `.github/skills/` | `.agents/skills/` | `skills/` | — | — |
+| Agent   | Priority 1         | Priority 2        | Priority 3       | Priority 4        | Fallback  |
+| ------- | ------------------ | ----------------- | ---------------- | ----------------- | --------- |
+| agents  | `.agents/skills/`  | `skills/`         | —                | —                 | —         |
+| cursor  | `.cursor/skills/`  | `.claude/skills/` | `.codex/skills/` | `.agents/skills/` | `skills/` |
+| claude  | `.claude/skills/`  | `.agents/skills/` | `skills/`        | —                 | —         |
+| codex   | `.codex/skills/`   | `.agents/skills/` | `skills/`        | —                 | —         |
+| factory | `.factory/skills/` | `.agents/skills/` | `skills/`        | —                 | —         |
+| copilot | `.github/skills/`  | `.agents/skills/` | `skills/`        | —                 | —         |
 
 If none of these paths exist, the CLI checks for a `SKILL.md` at the repo root (single-skill repository).
 
@@ -93,6 +95,7 @@ Cursor has a setting **"Include third-party Plugins, Skills, and other configs"*
 - **Toggle OFF**: Cursor only loads from `~/.cursor/skills/`.
 
 If you use Cursor with this toggle enabled, consider either:
+
 - Installing common skills only to `~/.claude/skills/` (Cursor will pick them up automatically)
 - Or installing to `~/.cursor/skills/` only via `--agent cursor` and letting other agents get their own copies
 
@@ -121,7 +124,8 @@ my-skills-repo/
   .codex/skills/                # codex-specific skills (cursor also reads these)
     codex-sandbox/
       SKILL.md
-  .pi/skills/                   # pi-mono-specific skills
+  .pi/skills/                   # pi-mono-specific skills (still scanned via the
+                                # `agents` adapter when present in repos)
     pi-config/
       SKILL.md
   .github/skills/               # copilot-specific skills (placeholder)
@@ -143,7 +147,7 @@ Each agent has its own mechanism for loading skills at runtime:
 - **Cursor** — Reads `<available_skills>` entries from project rules. Each skill directory must contain a `SKILL.md` with a description and instructions. Auto-discovers from `.claude/skills/` and `.codex/skills/` for compatibility.
 - **Claude Code** — Loads skills from `~/.claude/skills/` on session start. Same `SKILL.md` contract.
 - **Codex** — Loads skills from `~/.codex/skills/`. Same `SKILL.md` contract.
-- **Pi-mono** — Loads skills from `~/.agents/skills/`. Discovers from `.pi/skills/` for agent-specific content.
+- **agents** (cross-client target) — Skills installed here live at `~/.agents/skills/`, the convention from [agentskills.io](https://agentskills.io/client-implementation/adding-skills-support#step-1-discover-skills). Pi-mono loads from this path natively; other clients can be pointed here via symlinks or by configuring an additional skills directory. The legacy adapter name `pi-mono` is kept as an alias for back-compat with older manifests.
 - **Copilot** — Provisional. Target path `~/.github/skills/` is subject to change.
 
 ## Adding a New Agent Adapter
@@ -158,7 +162,7 @@ declare -A AGENT_DIRS=(
   [new-agent]="$HOME/.new-agent/skills"
 )
 
-readonly SUPPORTED_AGENTS=("cursor" "claude" "codex" "pi-mono" "copilot" "new-agent")
+readonly SUPPORTED_AGENTS=("agents" "cursor" "claude" "codex" "factory" "copilot" "new-agent")
 ```
 
 3. Run `ai-skills doctor` to verify the new agent directory is detected.
@@ -167,13 +171,14 @@ readonly SUPPORTED_AGENTS=("cursor" "claude" "codex" "pi-mono" "copilot" "new-ag
 
 ## Known Limitations
 
-| Agent | Limitation |
-|-------|-----------|
-| cursor | Skill discovery in project-scoped `.cursor/skills/` is separate from the global install path. The CLI manages global only. |
-| claude | No namespace isolation — all skills share a flat directory under `~/.claude/skills/`. |
-| codex | Same flat-directory constraint as Claude. |
-| pi-mono | Uses the generic `~/.agents/skills/` path, which may overlap with other agents using the same standard location. |
-| copilot | Target path and loading mechanism unconfirmed. Do not install skills to this agent yet. |
+| Agent   | Limitation                                                                                                                                                                                                                                                                                                        |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| agents  | Generic cross-client path. Not all clients scan `~/.agents/skills/` natively (e.g. Claude Code: see [anthropics/claude-code#53950](https://github.com/anthropics/claude-code/issues/53950)). When that's the case, pair this adapter with the client's own adapter so the skill is symlinked into both locations. |
+| cursor  | Skill discovery in project-scoped `.cursor/skills/` is separate from the global install path. The CLI manages global only.                                                                                                                                                                                        |
+| claude  | No namespace isolation — all skills share a flat directory under `~/.claude/skills/`.                                                                                                                                                                                                                             |
+| codex   | Same flat-directory constraint as Claude.                                                                                                                                                                                                                                                                         |
+| factory | Same flat-directory constraint as Claude.                                                                                                                                                                                                                                                                         |
+| copilot | Target path and loading mechanism unconfirmed. Do not install skills to this agent yet.                                                                                                                                                                                                                           |
 
 ## Reference
 

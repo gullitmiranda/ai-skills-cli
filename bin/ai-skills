@@ -22,16 +22,22 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # --- Agent adapter config ---
 
 declare -A AGENT_DIRS=(
+	[agents]="${HOME}/.agents/skills"
 	[cursor]="$HOME/.cursor/skills"
 	[claude]="$HOME/.claude/skills"
 	[codex]="$HOME/.codex/skills"
 	[factory]="$HOME/.factory/skills"
-	["pi-mono"]="$HOME/.agents/skills"
 	[copilot]="$HOME/.github/skills"
 )
 
-readonly SUPPORTED_AGENTS=("cursor" "claude" "codex" "factory" "pi-mono" "copilot")
-readonly DEFAULT_AGENTS=("cursor" "claude" "factory")
+# Back-compat: legacy agent names that map to canonical entries above.
+# Allows manifests and CLI flags using the old name to keep working.
+declare -A AGENT_ALIASES=(
+	["pi-mono"]="agents"
+)
+
+readonly SUPPORTED_AGENTS=("agents" "cursor" "claude" "codex" "factory" "copilot")
+readonly DEFAULT_AGENTS=("agents" "cursor" "claude" "factory")
 
 # --- Colors / output ---
 
@@ -146,9 +152,17 @@ configured_agents() {
 	agents="$(manifest_get '.agents // [] | .[]' 2>/dev/null)" || true
 	if [[ -z $agents ]]; then
 		printf '%s\n' "${DEFAULT_AGENTS[@]}"
-	else
-		echo "$agents"
+		return
 	fi
+	# Normalize legacy/aliased names (e.g. pi-mono -> agents) and dedupe.
+	declare -A seen
+	while IFS= read -r a; do
+		[[ -z ${a} ]] && continue
+		a="$(resolve_agent "${a}")"
+		[[ -n ${seen[${a}]-} ]] && continue
+		seen[${a}]=1
+		echo "${a}"
+	done <<<"${agents}"
 }
 
 target_agents() {
@@ -159,8 +173,20 @@ target_agents() {
 	fi
 }
 
-agent_dir() {
+# Resolve a possibly-aliased agent name to its canonical key.
+resolve_agent() {
 	local agent="$1"
+	local canonical="${AGENT_ALIASES[${agent}]-}"
+	if [[ -n ${canonical} ]]; then
+		echo "${canonical}"
+	else
+		echo "${agent}"
+	fi
+}
+
+agent_dir() {
+	local agent
+	agent="$(resolve_agent "$1")"
 	echo "${AGENT_DIRS[$agent]-}"
 }
 
@@ -477,13 +503,16 @@ cmd_bootstrap() {
 	if [[ -n $TARGET_AGENT ]]; then
 		agents=("$TARGET_AGENT")
 	else
-		# Merge existing manifest agents with defaults (preserving order, deduplicating)
+		# Merge existing manifest agents with defaults (preserving order, deduplicating).
+		# Aliased names (e.g. legacy "pi-mono") are normalized to their canonical keys.
 		local existing_agents=()
 		mapfile -t existing_agents < <(manifest_get '.agents // [] | .[]' 2>/dev/null || true)
 		declare -A seen
 		agents=()
 		for a in "${existing_agents[@]}" "${DEFAULT_AGENTS[@]}"; do
-			[[ -z $a || -n ${seen[$a]-} ]] && continue
+			[[ -z $a ]] && continue
+			a="$(resolve_agent "${a}")"
+			[[ -n ${seen[$a]-} ]] && continue
 			seen[$a]=1
 			agents+=("$a")
 		done
@@ -1154,7 +1183,7 @@ $(_bold "MAINTENANCE")
   self-uninstall      Remove CLI symlinks and optionally state directory
 
 $(_bold "OPTIONS")
-  --agent <name>      Target a specific agent (cursor, claude, codex, factory, pi-mono, copilot)
+  --agent <name>      Target a specific agent (agents, cursor, claude, codex, factory, copilot)
   --ref <ref>         Pin to a branch, tag, or commit SHA
   --path <path>       Specify a subpath within the repository
   --profile <name>    Use a specific profile for this command

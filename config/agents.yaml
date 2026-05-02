@@ -9,6 +9,21 @@
 #   notes         - agent-specific caveats
 
 agents:
+  # Cross-client shared target following the agentskills.io convention.
+  # Skills installed here are visible to any client that scans ~/.agents/skills/.
+  # Native target for pi-mono; other clients can be pointed here via symlinks.
+  agents:
+    target_dir: ~/.agents/skills
+    discovery:
+      - .agents/skills
+      - skills
+    status: active
+    notes: >
+      Cross-client shared location from the agentskills.io convention.
+      Used natively by pi-mono and recognized by any client that opts in to
+      scanning ~/.agents/skills/. The legacy adapter name "pi-mono" is kept
+      as an alias for back-compat with older manifests and CLI invocations.
+
   cursor:
     target_dir: "~/.cursor/skills"
     discovery:
@@ -46,17 +61,6 @@ agents:
       Codex loads skills from ~/.codex/skills/.
       Each skill must contain a SKILL.md at its root.
 
-  pi-mono:
-    target_dir: "~/.agents/skills"
-    discovery:
-      - ".pi/skills"
-      - ".agents/skills"
-      - "skills"
-    status: active
-    notes: >
-      Pi-mono uses the cross-agent standard path ~/.agents/skills/ as its
-      target directory. Discovers from .pi/skills/ for agent-specific content.
-
   copilot:
     target_dir: "~/.github/skills"
     discovery:
@@ -82,3 +86,6 @@ agents:
 # The CLI walks these paths in order and collects every subdirectory
 # containing a SKILL.md. Duplicates across paths are deduplicated by
 # skill directory name.
+#
+# Aliases (CLI-only, not part of the agentskills.io spec):
+#   pi-mono  -> agents   # legacy name kept for back-compat

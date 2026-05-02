@@ -114,14 +114,14 @@ Initializes agent directories and installs core skills from the CLI repo.
 
 ## Global Flags
 
-| Flag               | Description                                                                |
-| ------------------ | -------------------------------------------------------------------------- |
-| `--agent <name>`   | Target a specific agent: `cursor`, `claude`, `codex`, `pi-mono`, `copilot` |
-| `--ref <ref>`      | Pin to branch, tag, or commit SHA                                          |
-| `--path <path>`    | Subpath within the repository                                              |
-| `--profile <name>` | Override active auth profile                                               |
-| `--dry-run`        | Preview actions without making changes                                     |
-| `--debug`          | Enable verbose debug output                                                |
+| Flag               | Description                                                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `--agent <name>`   | Target a specific agent: `agents`, `cursor`, `claude`, `codex`, `factory`, `copilot` (legacy alias: `pi-mono` → `agents`) |
+| `--ref <ref>`      | Pin to branch, tag, or commit SHA                                                                                         |
+| `--path <path>`    | Subpath within the repository                                                                                             |
+| `--profile <name>` | Override active auth profile                                                                                              |
+| `--dry-run`        | Preview actions without making changes                                                                                    |
+| `--debug`          | Enable verbose debug output                                                                                               |
 
 ## Source Formats
 

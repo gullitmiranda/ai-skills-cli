@@ -4,6 +4,15 @@ Package manager for AI agent skills. Installs, updates, and manages skills from 
 
 Built on the [Agent Skills](https://agentskills.io) open standard.
 
+## Finding Skills
+
+Any GitHub repository with one or more `SKILL.md` files is a valid source. To browse curated catalogs, see:
+
+- [skills.sh](https://skills.sh/) — open leaderboard of agent skills (by Vercel Labs)
+- [agentskill.sh](https://agentskill.sh/) — directory with quality scores, security audits, and skillsets
+
+Once you find an `owner/repo` you want, install it with `ai-skills add owner/repo` (see [Usage](#usage)). Native search via the CLI is on the [roadmap](ROADMAP.md).
+
 ## How It Works
 
 Skill repositories on GitHub contain `SKILL.md` files following the [agentskills.io spec](https://agentskills.io/specification). The CLI clones them, discovers skills, and symlinks them into the right agent directories on your machine. Changes you make to installed skills propagate back to the source repo.
@@ -56,15 +65,31 @@ ai-skills add owner/skills-repo
 # From a specific skill within a repo
 ai-skills add https://github.com/owner/repo/tree/main/skills/my-skill
 
+# From a local clone you already maintain (symlinks point at the local repo,
+# so edits round-trip through your normal git workflow)
+ai-skills add ~/code/my-skills
+
 # Pin to a version
 ai-skills add owner/repo --ref v1.0.0
 
 # Target a specific agent only
 ai-skills add owner/repo --agent cursor
 
+# Use a non-default profile (see Profiles below)
+ai-skills add owner/repo --profile work
+
 # Preview without installing
 ai-skills add owner/repo --dry-run
 ```
+
+Supported source formats:
+
+| Format                      | Example                                                   |
+| --------------------------- | --------------------------------------------------------- |
+| `owner/repo` shorthand      | `gullitmiranda/gullit-skills`                             |
+| Full GitHub URL             | `https://github.com/owner/repo`                           |
+| GitHub URL with subpath/ref | `https://github.com/owner/repo/tree/main/skills/my-skill` |
+| Local git clone             | `~/code/my-skills`, `./my-skills`, `/abs/path/to/repo`    |
 
 ### Manage skills
 
@@ -91,6 +116,19 @@ ai-skills doctor
 # Pull latest CLI version and re-run setup
 ai-skills self-update
 ```
+
+### Profiles
+
+Profiles route git credentials per skill source by cloning into per-profile directories that gitconfig `includeIf` rules can match. Useful when you mix personal and work GitHub accounts.
+
+```bash
+ai-skills profile list
+ai-skills profile add work --repos-dir ~/.ai-skills/repos/work
+ai-skills profile default personal
+ai-skills add my-org/repo --profile work
+```
+
+See [`docs/profiles.md`](docs/profiles.md) for the full setup, including the `includeIf` blocks you need in your gitconfig.
 
 ## Skill Discovery
 
@@ -120,13 +158,16 @@ my-skills-repo/
 
 ## Supported Agents
 
-| Agent | Target directory | Status |
-|-------|-----------------|--------|
-| Cursor | `~/.cursor/skills/` | Active |
-| Claude | `~/.claude/skills/` | Active |
-| Codex | `~/.codex/skills/` | Active |
-| pi-mono | `~/.agents/skills/` | Active |
-| Copilot | `~/.github/skills/` | Placeholder |
+| Agent   | Target directory     | Status      |
+| ------- | -------------------- | ----------- |
+| agents  | `~/.agents/skills/`  | Active      |
+| Cursor  | `~/.cursor/skills/`  | Active      |
+| Claude  | `~/.claude/skills/`  | Active      |
+| Codex   | `~/.codex/skills/`   | Active      |
+| Factory | `~/.factory/skills/` | Active      |
+| Copilot | `~/.github/skills/`  | Placeholder |
+
+The `agents` adapter targets `~/.agents/skills/`, the cross-client convention from [agentskills.io](https://agentskills.io/client-implementation/adding-skills-support#step-1-discover-skills). It is the native location for pi-mono (the legacy name `pi-mono` is still accepted as an alias) and any other client that opts in to scanning that path.
 
 > **Note:** Cursor can auto-import skills from other agents' directories (`.claude/`, `.codex/`) when "Include third-party Plugins, Skills, and other configs" is enabled in Cursor Settings. This may cause duplicate skill loading. If you use this toggle, consider installing common skills to one agent only (e.g. `--agent claude`) and letting Cursor pick them up via cross-loading. See [agent-adapters.md](docs/agent-adapters.md) for details.
 

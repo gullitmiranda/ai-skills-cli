@@ -102,6 +102,13 @@ assert_not_contains "${output}" "other/repo/skills/other"
 assert_contains "${output}" "Updated 2 skill(s)"
 
 write_manifest "${skill_repo}"
+output="$("${BIN}" update gullitmiranda/gullit-skills --dry-run 2>&1)"
+assert_contains "${output}" "gullitmiranda/gullit-skills/skills/pr"
+assert_contains "${output}" "gullitmiranda/gullit-skills/skills/workflow"
+assert_not_contains "${output}" "other/repo/skills/other"
+assert_contains "${output}" "Updated 2 skill(s)"
+
+write_manifest "${skill_repo}"
 output="$("${BIN}" --dry-run update gullitmiranda/gullit-skills/skills/pr 2>&1)"
 assert_contains "${output}" "gullitmiranda/gullit-skills/skills/pr"
 assert_not_contains "${output}" "gullitmiranda/gullit-skills/skills/workflow"

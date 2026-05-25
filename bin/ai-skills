@@ -148,6 +148,13 @@ manifest_skill_ids_for_source() {
 	jq -r --arg source "${source}" '.skills | to_entries[] | select(.value.source == $source) | .key' "${MANIFEST}"
 }
 
+manifest_skill_ids_for_repo() {
+	local repo_source="$1"
+	local repo_id="${repo_source#github.com/}"
+	jq -r --arg source "${repo_source}" --arg prefix "${repo_id}/" \
+		'.skills | to_entries[] | select(.value.source == $source or (.key | startswith($prefix))) | .key' "${MANIFEST}"
+}
+
 now_iso() {
 	date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
@@ -690,7 +697,28 @@ cmd_install() {
 }
 
 cmd_update() {
-	local target_sid="${1-}"
+	local target_sid=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--agent)
+			TARGET_AGENT="$2"
+			shift 2
+			;;
+		--profile)
+			FLAG_PROFILE="$2"
+			shift 2
+			;;
+		--dry-run)
+			DRY_RUN=true
+			shift
+			;;
+		-*) die "Unknown option: $1" ;;
+		*)
+			target_sid="$1"
+			shift
+			;;
+		esac
+	done
 
 	echo ""
 	echo "$(_bold "ai-skills update")${target_sid:+ $target_sid}"
@@ -711,7 +739,7 @@ cmd_update() {
 			repo_source="$(github_repo_selector_source "${target_sid}")"
 			if [[ -n ${repo_source} ]]; then
 				local matched_sids
-				matched_sids="$(manifest_skill_ids_for_source "${repo_source}")"
+				matched_sids="$(manifest_skill_ids_for_repo "${repo_source}")"
 				if [[ -n ${matched_sids} ]]; then
 					mapfile -t sids <<<"${matched_sids}"
 				fi

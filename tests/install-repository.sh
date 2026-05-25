@@ -58,4 +58,20 @@ manifest_ids="$(jq -r '.skills | keys[]' "${AI_SKILLS_HOME}/manifest.json")"
 	exit 1
 }
 
+update_output="$("${BIN}" update gullitmiranda/gullit-skills --dry-run 2>&1)"
+[[ ${update_output} == *"gullitmiranda/gullit-skills/skills/pr"* ]] || {
+	printf 'Expected repository update to include locally installed pr skill.\nOutput:\n%s\n' "${update_output}" >&2
+	exit 1
+}
+
+[[ ${update_output} == *"gullitmiranda/gullit-skills/skills/workflow"* ]] || {
+	printf 'Expected repository update to include locally installed workflow skill.\nOutput:\n%s\n' "${update_output}" >&2
+	exit 1
+}
+
+[[ ${update_output} == *"Updated 2 skill(s)"* ]] || {
+	printf 'Expected repository update to select two local skills.\nOutput:\n%s\n' "${update_output}" >&2
+	exit 1
+}
+
 printf 'install-repository: ok\n'

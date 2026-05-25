@@ -578,7 +578,9 @@ cmd_bootstrap() {
 	info "Bootstrap complete. Agents: ${agents[*]}"
 }
 
-cmd_add() {
+cmd_install_source() {
+	local command_name="$1"
+	shift
 	local source=""
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -609,10 +611,10 @@ cmd_add() {
 			;;
 		esac
 	done
-	[[ -z $source ]] && die "Usage: ai-skills add <source>"
+	[[ -z $source ]] && die "Usage: ai-skills ${command_name} <source>"
 
 	echo ""
-	echo "$(_bold "ai-skills add") $source"
+	echo "$(_bold "ai-skills ${command_name}") $source"
 	echo ""
 
 	require_cmd git
@@ -676,7 +678,15 @@ cmd_add() {
 	done
 
 	echo ""
-	info "Added ${#skill_dirs[@]} skill(s) from $owner/$repo"
+	info "Installed ${#skill_dirs[@]} skill(s) from $owner/$repo"
+}
+
+cmd_add() {
+	cmd_install_source "add" "$@"
+}
+
+cmd_install() {
+	cmd_install_source "install" "$@"
 }
 
 cmd_update() {
@@ -1206,6 +1216,7 @@ $(_bold "USAGE")
 
 $(_bold "SKILL COMMANDS")
   add <source>                   Install skill(s) from a GitHub repo or local path
+  install <source>               Alias for add
   remove <source-id>             Remove an installed skill from agents and manifest
   update [source-id|owner/repo]  Re-fetch and reinstall skills
   list                           Show installed skills from manifest
@@ -1239,6 +1250,7 @@ $(_bold "SOURCE FORMATS") (for 'add')
 
 $(_bold "EXAMPLES")
   ai-skills add gullitmiranda/gullit-skills
+  ai-skills install gullitmiranda/gullit-skills
   ai-skills add https://github.com/org/repo/tree/main/skills/my-skill
   ai-skills add owner/repo --path skills/specific --ref v1.0.0
   ai-skills add owner/repo --agent cursor
@@ -1314,6 +1326,7 @@ main() {
 	case "$cmd" in
 	bootstrap) cmd_bootstrap "$@" ;;
 	add) cmd_add "$@" ;;
+	install) cmd_install "$@" ;;
 	update) cmd_update "$@" ;;
 	remove) cmd_remove "$@" ;;
 	list) cmd_list "$@" ;;

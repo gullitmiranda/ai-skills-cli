@@ -24,6 +24,7 @@ The CLI requires `git` and `jq`. Run `ai-skills doctor` to verify.
 ```bash
 # Full repository (discovers and installs all skills)
 ai-skills add owner/repo
+ai-skills install owner/repo
 
 # Specific skill within a repo
 ai-skills add owner/repo --path skills/my-skill
@@ -128,7 +129,7 @@ Initializes agent directories and installs core skills from the CLI repo.
 
 ## Source Formats
 
-The `add` command accepts these formats:
+The `add` and `install` commands accept these formats:
 
 - `owner/repo` - full repository
 - `owner/repo/path/to/skill` - specific skill path
@@ -163,7 +164,7 @@ When installing from a repository, the CLI discovers skills in this priority:
 ```bash
 ai-skills doctor          # verify prerequisites
 ai-skills bootstrap       # initialize agent dirs + core skills
-ai-skills add owner/repo  # install your first skill repo
+ai-skills install owner/repo  # install your first skill repo
 ```
 
 ### Keep skills current

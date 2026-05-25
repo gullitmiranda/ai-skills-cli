@@ -30,6 +30,7 @@ Install from a GitHub URL or shorthand:
 
 ```bash
 ai-skills add owner/repo
+ai-skills install owner/repo
 ai-skills add https://github.com/owner/repo/tree/main/skills/my-skill
 ai-skills add owner/repo --path skills/specific --ref v1.0.0
 ```

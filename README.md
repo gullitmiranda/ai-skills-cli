@@ -11,7 +11,7 @@ Any GitHub repository with one or more `SKILL.md` files is a valid source. To br
 - [skills.sh](https://skills.sh/) — open leaderboard of agent skills (by Vercel Labs)
 - [agentskill.sh](https://agentskill.sh/) — directory with quality scores, security audits, and skillsets
 
-Once you find an `owner/repo` you want, install it with `ai-skills add owner/repo` (see [Usage](#usage)). Native search via the CLI is on the [roadmap](ROADMAP.md).
+Once you find an `owner/repo` you want, install it with `ai-skills install owner/repo` or `ai-skills add owner/repo` (see [Usage](#usage)). Native search via the CLI is on the [roadmap](ROADMAP.md).
 
 ## How It Works
 
@@ -61,6 +61,7 @@ export PATH="$HOME/.local/bin:$PATH"  # add to ~/.zshrc or ~/.bashrc
 ```bash
 # From a full repository (installs all discovered skills)
 ai-skills add owner/skills-repo
+ai-skills install owner/skills-repo
 
 # From a specific skill within a repo
 ai-skills add https://github.com/owner/repo/tree/main/skills/my-skill

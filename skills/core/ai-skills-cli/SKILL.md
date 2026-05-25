@@ -50,6 +50,9 @@ ai-skills add owner/repo --dry-run
 # Update all installed skills (re-fetches repos, re-links)
 ai-skills update
 
+# Update all installed skills from a repository
+ai-skills update owner/repo
+
 # Update a specific skill by its source ID
 ai-skills update owner/repo/skills/my-skill
 ```

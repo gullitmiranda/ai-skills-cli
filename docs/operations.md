@@ -10,6 +10,12 @@ Update all installed skills to their latest tracked ref:
 ai-skills update
 ```
 
+Update all installed skills from one GitHub repository:
+
+```bash
+ai-skills update owner/repo
+```
+
 Update a specific skill by source ID:
 
 ```bash

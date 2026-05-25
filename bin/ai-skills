@@ -143,6 +143,11 @@ manifest_set() {
 	write_manifest "$tmp"
 }
 
+manifest_skill_ids_for_source() {
+	local source="$1"
+	jq -r --arg source "${source}" '.skills | to_entries[] | select(.value.source == $source) | .key' "${MANIFEST}"
+}
+
 now_iso() {
 	date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
@@ -221,6 +226,30 @@ parse_github_source() {
 	[[ -z $ref ]] && ref="main"
 
 	echo "$owner|$repo|$ref|$path"
+}
+
+github_repo_selector_source() {
+	local input="$1"
+	local owner="" repo=""
+
+	input="${input%.git}"
+	input="${input%/}"
+
+	if [[ ${input} =~ ^https?://github\.com/([^/]+)/([^/]+)$ ]]; then
+		owner="${BASH_REMATCH[1]}"
+		repo="${BASH_REMATCH[2]}"
+	elif [[ ${input} =~ ^github\.com/([^/]+)/([^/]+)$ ]]; then
+		owner="${BASH_REMATCH[1]}"
+		repo="${BASH_REMATCH[2]}"
+	elif [[ ${input} =~ ^([^/]+)/([^/]+)$ ]]; then
+		owner="${BASH_REMATCH[1]}"
+		repo="${BASH_REMATCH[2]}"
+	else
+		echo ""
+		return 0
+	fi
+
+	echo "github.com/${owner}/${repo}"
 }
 
 is_local_path() {
@@ -661,12 +690,24 @@ cmd_update() {
 	require_cmd jq
 	ensure_state_dir
 
-	local sids
+	local sids=()
 	if [[ -n $target_sid ]]; then
 		local exists
 		exists="$(manifest_get ".skills[\"$target_sid\"] // empty")"
-		[[ -z $exists ]] && die "Skill not found in manifest: $target_sid"
-		sids=("$target_sid")
+		if [[ -n $exists ]]; then
+			sids=("${target_sid}")
+		else
+			local repo_source=""
+			repo_source="$(github_repo_selector_source "${target_sid}")"
+			if [[ -n ${repo_source} ]]; then
+				local matched_sids
+				matched_sids="$(manifest_skill_ids_for_source "${repo_source}")"
+				if [[ -n ${matched_sids} ]]; then
+					mapfile -t sids <<<"${matched_sids}"
+				fi
+			fi
+			[[ ${#sids[@]} -eq 0 ]] && die "Skill not found in manifest: $target_sid"
+		fi
 	else
 		mapfile -t sids < <(manifest_get '.skills | keys[]' 2>/dev/null)
 	fi
@@ -1164,10 +1205,10 @@ $(_bold "USAGE")
   ai-skills <command> [options]
 
 $(_bold "SKILL COMMANDS")
-  add <source>        Install skill(s) from a GitHub repo or local path
-  remove <source-id>  Remove an installed skill from agents and manifest
-  update [source-id]  Re-fetch and reinstall skills (all or specific)
-  list                Show installed skills from manifest
+  add <source>                   Install skill(s) from a GitHub repo or local path
+  remove <source-id>             Remove an installed skill from agents and manifest
+  update [source-id|owner/repo]  Re-fetch and reinstall skills
+  list                           Show installed skills from manifest
 
 $(_bold "PROFILES")
   profile list        Show configured profiles
@@ -1203,6 +1244,8 @@ $(_bold "EXAMPLES")
   ai-skills add owner/repo --agent cursor
   ai-skills remove owner/repo/skills/my-skill
   ai-skills update
+  ai-skills update owner/repo
+  ai-skills update owner/repo/skills/my-skill
   ai-skills doctor
 
 $(_bold "ENVIRONMENT")

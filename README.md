@@ -100,6 +100,9 @@ ai-skills list
 # Update all installed skills
 ai-skills update
 
+# Update all installed skills from a repository
+ai-skills update owner/repo
+
 # Update a specific skill
 ai-skills update owner/repo/skills/my-skill
 

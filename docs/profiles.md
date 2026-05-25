@@ -28,6 +28,11 @@ Git credentials are routed by `includeIf` matching the repos path:
 ~/.ai-skills/repos/work/**      →  work gitconfig (work identity + credentials)
 ```
 
+When a remote source is installed with `--profile`, that profile is persisted in
+`manifest.json`. Later `ai-skills update` runs use each skill's saved profile, so
+one update can refresh personal and work repositories without switching the
+default profile first.
+
 ## CLI Commands
 
 ```bash
@@ -139,6 +144,9 @@ ai-skills profile default personal
 ai-skills add my-user/my-skills                          # uses default (personal)
 ai-skills add my-org/org-skills --profile work            # uses work credentials
 ```
+
+After that, `ai-skills update` will reuse the profile recorded for each remote
+skill source.
 
 4. Verify with `--debug`:
 

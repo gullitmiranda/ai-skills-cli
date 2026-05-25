@@ -20,6 +20,8 @@ make_skill_repo() {
 
 write_manifest() {
 	local skill_repo="$1"
+	local work_skill_repo="${2-}"
+	local old_work_skill_repo="${3-}"
 	mkdir -p "${AI_SKILLS_HOME}"
 	cat >"${AI_SKILLS_HOME}/manifest.json" <<JSON
 {
@@ -30,6 +32,7 @@ write_manifest() {
       "source": "github.com/gullitmiranda/gullit-skills",
       "path": "skills/pr",
       "ref": "main",
+      "profile": "personal",
       "agents": ["cursor"],
       "installed_at": "2026-01-01T00:00:00Z",
       "updated_at": "2026-01-01T00:00:00Z"
@@ -38,6 +41,7 @@ write_manifest() {
       "source": "github.com/gullitmiranda/gullit-skills",
       "path": "skills/workflow",
       "ref": "main",
+      "profile": "personal",
       "agents": ["cursor"],
       "installed_at": "2026-01-01T00:00:00Z",
       "updated_at": "2026-01-01T00:00:00Z"
@@ -46,6 +50,7 @@ write_manifest() {
       "source": "github.com/other/repo",
       "path": "skills/other",
       "ref": "main",
+      "profile": "work",
       "agents": ["cursor"],
       "installed_at": "2026-01-01T00:00:00Z",
       "updated_at": "2026-01-01T00:00:00Z"
@@ -60,6 +65,9 @@ JSON
   "profiles": {
     "personal": {
       "repos_dir": "${TMP_DIR}/repos"
+    },
+    "work": {
+      "repos_dir": "${TMP_DIR}/work-repos"
     }
   }
 }
@@ -68,6 +76,16 @@ JSON
 	mkdir -p "${TMP_DIR}/repos/gullitmiranda"
 	rm -f "${TMP_DIR}/repos/gullitmiranda/gullit-skills"
 	ln -s "${skill_repo}" "${TMP_DIR}/repos/gullitmiranda/gullit-skills"
+	if [[ -n ${work_skill_repo} ]]; then
+		mkdir -p "${TMP_DIR}/work-repos/other"
+		rm -f "${TMP_DIR}/work-repos/other/repo"
+		ln -s "${work_skill_repo}" "${TMP_DIR}/work-repos/other/repo"
+	fi
+	if [[ -n ${old_work_skill_repo} ]]; then
+		mkdir -p "${TMP_DIR}/repos/other"
+		rm -f "${TMP_DIR}/repos/other/repo"
+		ln -s "${old_work_skill_repo}" "${TMP_DIR}/repos/other/repo"
+	fi
 }
 
 assert_contains() {
@@ -93,6 +111,20 @@ make_skill_repo "${skill_repo}"
 git -C "${skill_repo}" init --quiet
 git -C "${skill_repo}" add .
 git -C "${skill_repo}" -c user.name=test -c user.email=test@example.com commit --quiet -m init
+
+work_skill_repo="${TMP_DIR}/source-repos/other-repo"
+mkdir -p "${work_skill_repo}/skills/other"
+printf '%s\n' 'name: other' >"${work_skill_repo}/skills/other/SKILL.md"
+git -C "${work_skill_repo}" init --quiet
+git -C "${work_skill_repo}" add .
+git -C "${work_skill_repo}" -c user.name=test -c user.email=test@example.com commit --quiet -m init
+
+old_work_skill_repo="${TMP_DIR}/source-repos/old-other-repo"
+mkdir -p "${old_work_skill_repo}/skills/wrong"
+printf '%s\n' 'name: wrong' >"${old_work_skill_repo}/skills/wrong/SKILL.md"
+git -C "${old_work_skill_repo}" init --quiet
+git -C "${old_work_skill_repo}" add .
+git -C "${old_work_skill_repo}" -c user.name=test -c user.email=test@example.com commit --quiet -m init
 
 write_manifest "${skill_repo}"
 output="$("${BIN}" --dry-run update gullitmiranda/gullit-skills 2>&1)"
@@ -120,5 +152,17 @@ if output="$("${BIN}" --dry-run update unknown/repo 2>&1)"; then
 	exit 1
 fi
 assert_contains "${output}" "Skill not found in manifest: unknown/repo"
+
+write_manifest "${skill_repo}" "${work_skill_repo}"
+output="$("${BIN}" --dry-run update 2>&1)"
+assert_contains "${output}" "gullitmiranda/gullit-skills/skills/pr"
+assert_contains "${output}" "gullitmiranda/gullit-skills/skills/workflow"
+assert_contains "${output}" "other/repo/skills/other"
+assert_contains "${output}" "Updated 3 skill(s)"
+
+write_manifest "${skill_repo}" "${work_skill_repo}" "${old_work_skill_repo}"
+output="$("${BIN}" --dry-run update other/repo 2>&1)"
+assert_contains "${output}" "other/repo/skills/other"
+assert_not_contains "${output}" "wrong"
 
 printf 'update-repository-selector: ok\n'

@@ -97,6 +97,11 @@ get_default_profile() {
 
 resolve_profile() {
 	local name="${FLAG_PROFILE:-$(get_default_profile)}"
+	resolve_profile_name "${name}"
+}
+
+resolve_profile_name() {
+	local name="$1"
 	local exists
 	exists="$(config_get ".profiles[\"$name\"] // empty")"
 	[[ -z $exists ]] && die "Profile not found: $name (run 'ai-skills profile list')"
@@ -117,6 +122,11 @@ repos_dir_for_profile() {
 current_repos_dir() {
 	local profile
 	profile="$(resolve_profile)"
+	repos_dir_for_resolved_profile "${profile}"
+}
+
+repos_dir_for_resolved_profile() {
+	local profile="$1"
 	local dir
 	dir="$(repos_dir_for_profile "$profile")"
 	mkdir -p "$dir"
@@ -351,16 +361,18 @@ migrate_repo_between_profiles() {
 
 clone_or_update_repo() {
 	local owner="$1" repo="$2" ref="$3"
+	local profile="${4:-$(resolve_profile)}"
+	profile="$(resolve_profile_name "${profile}")"
 	local repos_base
-	repos_base="$(current_repos_dir)"
+	repos_base="$(repos_dir_for_resolved_profile "${profile}")"
 	local repo_dir="$repos_base/$owner/$repo"
 
 	if [[ ! -d "$repo_dir/.git" ]]; then
 		local other_match
-		if other_match="$(find_repo_in_other_profiles "$owner" "$repo" "$(resolve_profile)")"; then
+		if other_match="$(find_repo_in_other_profiles "$owner" "$repo" "${profile}")"; then
 			local other_profile other_dir
 			IFS='|' read -r other_profile other_dir <<<"$other_match"
-			warn "$owner/$repo found in profile \"$other_profile\" instead of \"$(resolve_profile)\""
+			warn "$owner/$repo found in profile \"$other_profile\" instead of \"${profile}\""
 			if [[ -t 0 ]]; then
 				printf "  Move to current profile? [y/N] " >&2
 				read -r answer </dev/tty
@@ -371,10 +383,15 @@ clone_or_update_repo() {
 					repo_dir="$other_dir"
 				fi
 			else
-				warn "Non-interactive: skipping migration. Use: ai-skills add $owner/$repo --profile $(resolve_profile)"
-				repo_dir="$other_dir"
+				warn "Non-interactive: leaving existing clone in \"$other_profile\" and using profile \"${profile}\""
 			fi
 		fi
+	fi
+
+	if ${DRY_RUN} && [[ ! -d "${repo_dir}/.git" ]]; then
+		debug "Dry-run: skipping clone for ${owner}/${repo}"
+		echo "${repo_dir}"
+		return
 	fi
 
 	if [[ -d "$repo_dir/.git" ]]; then
@@ -497,6 +514,7 @@ update_manifest_skill() {
 	local sid="$1" source_str="$2" path="$3" ref="$4"
 	shift 4
 	local agents_json="[]"
+	local source_type profile_json="null"
 
 	for a in "$@"; do
 		agents_json="$(echo "$agents_json" | jq --arg a "$a" '. + [$a]')"
@@ -506,16 +524,22 @@ update_manifest_skill() {
 	now="$(now_iso)"
 	local existing_installed
 	existing_installed="$(manifest_get ".skills[\"$sid\"].installed_at // \"$now\"")"
+	source_type="$(source_type_for_manifest_source "${source_str}")"
+	if [[ ${source_type} == "remote-git" ]]; then
+		local profile
+		profile="$(resolve_profile)"
+		profile_json="$(jq -rn --arg profile "${profile}" '$profile')"
+	fi
 
 	manifest_set "
-    .skills[\"$sid\"] = {
+    .skills[\"$sid\"] = ({
       \"source\": \"$source_str\",
       \"path\": \"$path\",
       \"ref\": \"$ref\",
       \"agents\": $agents_json,
       \"installed_at\": \"$existing_installed\",
       \"updated_at\": \"$now\"
-    }
+    } + (if ${profile_json} == null then {} else {\"profile\": ${profile_json}} end))
   "
 }
 
@@ -757,10 +781,11 @@ cmd_update() {
 
 	local updated=0
 	for sid in "${sids[@]}"; do
-		local source ref path skill_agents_json
+		local source ref path profile skill_agents_json
 		source="$(manifest_get ".skills[\"$sid\"].source")"
 		ref="$(manifest_get ".skills[\"$sid\"].ref")"
 		path="$(manifest_get ".skills[\"$sid\"].path")"
+		profile="$(manifest_get ".skills[\"${sid}\"].profile // empty")"
 		skill_agents_json="$(manifest_get ".skills[\"$sid\"].agents")"
 
 		if [[ $source == "local/ai-skills-cli" ]]; then
@@ -786,7 +811,13 @@ cmd_update() {
 			local owner repo
 			owner="$(echo "${source}" | sed 's|github.com/||' | cut -d/ -f1)"
 			repo="$(echo "${source}" | sed 's|github.com/||' | cut -d/ -f2)"
-			repo_dir="$(clone_or_update_repo "${owner}" "${repo}" "${ref}")"
+			if [[ -z ${profile} ]]; then
+				profile="$(resolve_profile)"
+			else
+				profile="$(resolve_profile_name "${profile}")"
+			fi
+			debug "Using profile ${profile} for ${source}"
+			repo_dir="$(clone_or_update_repo "${owner}" "${repo}" "${ref}" "${profile}")"
 		else
 			warn "Unknown source type for ${sid}: ${source} — skipping"
 			continue

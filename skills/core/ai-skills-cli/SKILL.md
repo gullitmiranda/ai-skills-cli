@@ -157,6 +157,15 @@ When installing from a repository, the CLI discovers skills in this priority:
 3. Generic: `skills/*/`
 4. Root fallback: `SKILL.md` at repo root (single-skill repo)
 
+## SKILL.md Metadata Constraints
+
+Every `SKILL.md` must have YAML frontmatter with `name` and `description`.
+Keep `description` between 1 and 1024 characters. It should be a concise
+trigger summary that says what the skill does and when to use it; move long
+examples, workflows, and edge cases into the Markdown body or reference files.
+Strict loaders, including Zed, may reject skills whose description exceeds this
+limit.
+
 ## Common Workflows
 
 ### First-time setup

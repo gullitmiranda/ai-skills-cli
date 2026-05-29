@@ -1,20 +1,6 @@
 ---
 name: my-activity
-description: >
-  Generate activity digests from Slack and GitHub for the user OR for someone else.
-  Summarizes what someone did, what happened around them, pending items, and decisions made.
-  Use PROACTIVELY whenever the user asks things like "o que eu fiz ontem?", "resumo da semana",
-  "what did I do?", "weekly digest", "activity summary", "meu resumo",
-  "o que aconteceu essa semana?", "daily standup", "standup update",
-  "what's been going on?", or any variation asking about their recent activity
-  across communication and code. Also trigger when the user asks to track their
-  week, prepare a status update, or wants to know what they missed.
-  ALSO trigger when the user asks about SOMEONE ELSE's activity — e.g.,
-  "o que o fulano fez?", "puxa os commits da Maria", "resumo de atividade de @handle",
-  "what has <github-username> been working on?", "gera um report da atividade do X",
-  or any variation asking about another person's recent work across GitHub and Slack.
-  This includes generating activity reports or contribution summaries
-  for any team member or GitHub account.
+description: Generate activity digests from Slack and GitHub for the user or another person. Use when asked for daily, weekly, standup, catch-up, or contribution summaries.
 ---
 
 # Activity Digest
@@ -39,6 +25,7 @@ If the target is someone else, you need to **resolve their identity** before any
 ### Time period
 
 Figure out what time period the user wants:
+
 - "ontem" / "yesterday" -> previous business day
 - "essa semana" / "this week" -> Monday through today
 - "hoje" / "today" -> today only
@@ -60,6 +47,7 @@ Background subagents CANNOT request tool permissions from the user. You MUST tri
 Slack MCP tool names vary by environment (e.g. `mcp__plugin_slack_slack__slack_search_public_and_private` or `slack__slack_search_public_and_private`). Discover the actual tool names by looking at your available tools for ones matching `slack_search`, `slack_read_thread`, `slack_read_channel`, and `slack_read_user_profile`.
 
 Make a trivial call to each Slack tool to trigger permission approval:
+
 - **Search** tool (any simple query)
 - **Read thread** tool (dummy channel/ts - will error, that's fine)
 - **Read channel** tool (user's own ID as channel_id, limit 1)
@@ -93,13 +81,13 @@ You need to **resolve their identity** across both platforms. This is the tricki
 
 **Identity fields to collect:**
 
-| Field | How to get | Why it matters |
-|-------|-----------|---------------|
-| Slack user ID | Slack user search | Required for all Slack queries |
-| Display name | Slack profile | Helps identify them in discussions |
-| Email | Slack profile | Bridges Slack↔GitHub for private profiles |
-| GitHub username | Org member list / user search | Primary GitHub search key |
-| Role/title | Slack profile + conversation context | Context for subagents |
+| Field           | How to get                           | Why it matters                             |
+| --------------- | ------------------------------------ | ------------------------------------------ |
+| Slack user ID   | Slack user search                    | Required for all Slack queries             |
+| Display name    | Slack profile                        | Helps identify them in discussions         |
+| Email           | Slack profile                        | Bridges Slack↔GitHub for private profiles |
+| GitHub username | Org member list / user search        | Primary GitHub search key                  |
+| Role/title      | Slack profile + conversation context | Context for subagents                      |
 
 Pass ALL of these to subagents so they can search effectively.
 
@@ -108,23 +96,25 @@ This context is critical for subagents to understand what they're looking at and
 ## Step 3: Spawn Source-Specific Subagents
 
 Read the relevant reference files before spawning agents:
+
 - `references/slack.md` for Slack search strategy
 - `references/github.md` for GitHub activity patterns
 
 ### Time Slicing Strategy
 
-| Period | Slack Agents | GitHub Agents |
-|--------|-------------|---------------|
-| 1 day | 1 agent | 1 agent |
-| 2-3 days | 1 per day | 1 total |
-| 4-7 days (week) | 1 per day | 1 total |
-| 7+ days | 1 per day (cap at 7) | 1 total |
+| Period          | Slack Agents         | GitHub Agents |
+| --------------- | -------------------- | ------------- |
+| 1 day           | 1 agent              | 1 agent       |
+| 2-3 days        | 1 per day            | 1 total       |
+| 4-7 days (week) | 1 per day            | 1 total       |
+| 7+ days         | 1 per day (cap at 7) | 1 total       |
 
 Launch ALL agents in parallel using `run_in_background: true`.
 
 ### Subagent Prompt Template
 
 Every subagent prompt MUST include:
+
 1. **User identity**: Slack ID, GitHub username, display name
 2. **User role context**: what they do, their team, common topics
 3. **Time range**: exact dates with `on:YYYY-MM-DD` for Slack, date ranges for GitHub
@@ -135,6 +125,7 @@ Every subagent prompt MUST include:
 ### Output Directory
 
 Save all files to the working directory:
+
 - `slack_<day>.md` for daily Slack digests
 - `github_activity.md` for GitHub activity
 - `weekly_summary.md` or `daily_summary.md` for the consolidated report
@@ -142,6 +133,7 @@ Save all files to the working directory:
 ## Step 4: Handle Subagent Completion
 
 As agents complete:
+
 1. If an agent failed (permission denied, error), resume it or retry
 2. If an agent couldn't write its file, read its output and write the file yourself
 3. Track completion - don't consolidate until all agents finish
@@ -151,6 +143,7 @@ As agents complete:
 Read `references/consolidation.md` for the consolidation format.
 
 Read ALL output files from the subagents, then produce a single consolidated summary. The consolidation should:
+
 1. Cross-reference Slack discussions with GitHub PRs/issues
 2. Group by theme/project, not by source
 3. Highlight decisions, action items, blockers

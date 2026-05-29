@@ -39,6 +39,10 @@ Describe trigger conditions here.
 ```
 
 **Required frontmatter:** `name` and `description`.
+Keep `description` between 1 and 1024 characters. It should describe what the
+skill does and when to use it; longer examples and workflow details belong in
+the Markdown body or reference files. Some agents validate this strictly and may
+reject skills with longer descriptions.
 All other fields are optional and agent-dependent.
 
 ## Standard Directory Structure

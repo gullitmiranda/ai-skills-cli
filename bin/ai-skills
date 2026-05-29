@@ -68,6 +68,7 @@ FLAG_REF=""
 FLAG_PATH=""
 FLAG_PROFILE=""
 BACKEND="${AI_SKILLS_BACKEND:-legacy}"
+LEGACY_SKILL_FILTERS_CSV=""
 
 # --- Helpers ---
 
@@ -760,6 +761,35 @@ discover_skills() {
 	printf '%s\n' "${skills[@]}"
 }
 
+filter_skill_dirs_by_name() {
+	local filters_csv="$1"
+	shift
+
+	if [[ -z ${filters_csv} || ${filters_csv} == "*" ]]; then
+		printf '%s\n' "$@"
+		return
+	fi
+
+	local filters=()
+	IFS=',' read -r -a filters <<<"${filters_csv}"
+
+	local skill_dir filter matched
+	for skill_dir in "$@"; do
+		[[ -z ${skill_dir} ]] && continue
+		local skill_name
+		skill_name="$(basename "${skill_dir}")"
+		matched=false
+		for filter in "${filters[@]}"; do
+			[[ -z ${filter} || ${filter} == "*" ]] && continue
+			if [[ ${skill_name} == "${filter}" ]]; then
+				matched=true
+				break
+			fi
+		done
+		${matched} && printf '%s\n' "${skill_dir}"
+	done
+}
+
 # --- Skill installation ---
 
 install_skill_to_agent() {
@@ -871,14 +901,11 @@ sync_npx_skills_entry() {
 
 sync_legacy_entry() {
 	local source="$1" ref="$2" agents_csv="$3" skills_csv="$4"
-	if [[ -n ${skills_csv} && ${skills_csv} != "*" ]]; then
-		warn "Legacy backend cannot filter named skills yet; installing from source/path for ${source}"
-	fi
-
-	local saved_backend="${BACKEND}" saved_ref="${FLAG_REF}" saved_path="${FLAG_PATH}" saved_agent="${TARGET_AGENT}"
+	local saved_backend="${BACKEND}" saved_ref="${FLAG_REF}" saved_path="${FLAG_PATH}" saved_agent="${TARGET_AGENT}" saved_filters="${LEGACY_SKILL_FILTERS_CSV}"
 	BACKEND="legacy"
 	FLAG_REF="${ref}"
 	FLAG_PATH=""
+	LEGACY_SKILL_FILTERS_CSV="${skills_csv}"
 
 	if [[ -n ${agents_csv} ]]; then
 		local agents agent
@@ -897,6 +924,7 @@ sync_legacy_entry() {
 	FLAG_REF="${saved_ref}"
 	FLAG_PATH="${saved_path}"
 	TARGET_AGENT="${saved_agent}"
+	LEGACY_SKILL_FILTERS_CSV="${saved_filters}"
 }
 
 sync_spec_file() {
@@ -1131,6 +1159,11 @@ cmd_install_source() {
 		source_str="github.com/$owner/$repo"
 	fi
 
+	if ${DRY_RUN} && [[ ! -d ${repo_dir} ]]; then
+		info "[dry-run] Would inspect ${owner}/${repo}${path:+/${path}} after cloning"
+		return
+	fi
+
 	local agents
 	mapfile -t agents < <(target_agents)
 
@@ -1140,6 +1173,11 @@ cmd_install_source() {
 			discover_skills "$repo_dir" "$path" "$agent"
 		done | sort -u
 	)
+
+	if [[ -n ${LEGACY_SKILL_FILTERS_CSV} && ${LEGACY_SKILL_FILTERS_CSV} != "*" ]]; then
+		# shellcheck disable=SC2312
+		mapfile -t skill_dirs < <(filter_skill_dirs_by_name "${LEGACY_SKILL_FILTERS_CSV}" "${skill_dirs[@]}")
+	fi
 
 	if [[ ${#skill_dirs[@]} -eq 0 ]]; then
 		die "No skills found in $owner/$repo${path:+/$path}"

@@ -5,6 +5,9 @@ readonly VERSION="0.2.0"
 readonly STATE_DIR="${AI_SKILLS_HOME:-$HOME/.ai-skills}"
 readonly MANIFEST="$STATE_DIR/manifest.json"
 readonly CONFIG_FILE="$STATE_DIR/config.json"
+readonly PROFILE_SPECS_DIR="${STATE_DIR}/profiles"
+readonly PROFILE_FRAGMENTS_DIR="${STATE_DIR}/profiles.d"
+readonly NPX_SKILLS_PACKAGE="${AI_SKILLS_NPX_PACKAGE:-skills}"
 
 _resolve_source() {
 	local src="${BASH_SOURCE[0]}"
@@ -64,6 +67,7 @@ TARGET_AGENT=""
 FLAG_REF=""
 FLAG_PATH=""
 FLAG_PROFILE=""
+BACKEND="${AI_SKILLS_BACKEND:-legacy}"
 
 # --- Helpers ---
 
@@ -75,6 +79,18 @@ ensure_state_dir() {
 	mkdir -p "$STATE_DIR"
 	[[ -f $MANIFEST ]] || write_manifest '{"version":1,"agents":[],"skills":{}}'
 	[[ -f $CONFIG_FILE ]] || echo '{"default_profile":"personal","profiles":{"personal":{}}}' | jq . >"$CONFIG_FILE"
+}
+
+validate_backend() {
+	case "$1" in
+	legacy | npx-skills) ;;
+	*) die "Unknown backend: $1 (expected: legacy or npx-skills)" ;;
+	esac
+}
+
+set_backend() {
+	validate_backend "$1"
+	BACKEND="$1"
 }
 
 # --- Config / Profiles ---
@@ -131,6 +147,26 @@ repos_dir_for_resolved_profile() {
 	dir="$(repos_dir_for_profile "$profile")"
 	mkdir -p "$dir"
 	echo "$dir"
+}
+
+resolve_existing_file() {
+	local input="$1"
+	input="${input/#\~/${HOME}}"
+	[[ -f ${input} ]] || die "File not found: ${input}"
+	local dir base
+	dir="$(cd "$(dirname "${input}")" && pwd)"
+	base="$(basename "${input}")"
+	echo "${dir}/${base}"
+}
+
+profile_spec_path() {
+	local profile="$1"
+	echo "${PROFILE_SPECS_DIR}/${profile}.yaml"
+}
+
+profile_fragments_dir() {
+	local profile="$1"
+	echo "${PROFILE_FRAGMENTS_DIR}/${profile}"
 }
 
 read_manifest() {
@@ -210,6 +246,248 @@ agent_dir() {
 	local agent
 	agent="$(resolve_agent "$1")"
 	echo "${AGENT_DIRS[$agent]-}"
+}
+
+npx_skills_agent() {
+	local agent
+	agent="$(resolve_agent "$1")"
+	case "${agent}" in
+	agents) echo "universal" ;;
+	claude) echo "claude-code" ;;
+	cursor | codex | factory | copilot) echo "${agent}" ;;
+	*) echo "${agent}" ;;
+	esac
+}
+
+npx_skills_agent_display() {
+	local agent
+	agent="$(resolve_agent "$1")"
+	case "${agent}" in
+	agents) echo "Universal" ;;
+	claude | claude-code) echo "Claude Code" ;;
+	cursor) echo "Cursor" ;;
+	codex) echo "Codex" ;;
+	factory | droid) echo "Droid" ;;
+	copilot | github-copilot) echo "GitHub Copilot" ;;
+	*) echo "${agent}" ;;
+	esac
+}
+
+print_command() {
+	printf '    '
+	printf '%q ' "$@"
+	printf '\n'
+}
+
+run_or_preview() {
+	if ${DRY_RUN}; then
+		info "[dry-run] Would run:"
+		print_command "$@"
+	else
+		"$@"
+	fi
+}
+
+source_for_npx_skills_backend() {
+	local source="$1"
+
+	if [[ -n ${FLAG_PATH} ]]; then
+		case "${source}" in
+		/* | ~* | ./* | ../* | . | ..)
+			echo "${source%/}/${FLAG_PATH}"
+			return
+			;;
+		*) ;;
+		esac
+		local parsed owner repo ref path
+		parsed="$(parse_github_source "${source}")"
+		IFS='|' read -r owner repo ref path <<<"${parsed}"
+		echo "https://github.com/${owner}/${repo}/tree/${ref}/${path}"
+		return
+	fi
+
+	if [[ -n ${FLAG_REF} ]]; then
+		case "${source}" in
+		/* | ~* | ./* | ../* | . | ..) ;;
+		*)
+			echo "${source}@${FLAG_REF}"
+			return
+			;;
+		esac
+	fi
+
+	echo "${source}"
+}
+
+npx_skills_verify_install() {
+	local agents_csv="$1"
+	shift
+	local skill_filters=("$@")
+
+	${DRY_RUN} && return
+	[[ ${#skill_filters[@]} -eq 0 ]] && return
+
+	local named_skills=()
+	local skill
+	for skill in "${skill_filters[@]}"; do
+		[[ -z ${skill} || ${skill} == "*" ]] && continue
+		named_skills+=("${skill}")
+	done
+	[[ ${#named_skills[@]} -eq 0 ]] && return
+
+	local agents=()
+	if [[ -n ${agents_csv} ]]; then
+		IFS=',' read -r -a agents <<<"${agents_csv}"
+	else
+		# shellcheck disable=SC2312
+		mapfile -t agents < <(target_agents)
+	fi
+
+	local list_json
+	if ! list_json="$(npx --yes "${NPX_SKILLS_PACKAGE}" list -g --json 2>/dev/null)"; then
+		warn "Could not verify npx-skills install with 'npx skills list -g --json'"
+		return
+	fi
+
+	for skill in "${named_skills[@]}"; do
+		local expected_agent observed_agents agent
+		for agent in "${agents[@]}"; do
+			[[ -z ${agent} ]] && continue
+			expected_agent="$(npx_skills_agent_display "${agent}")"
+			if ! jq -e --arg skill "${skill}" --arg agent "${expected_agent}" \
+				'any(.[]; .name == $skill and ((.agents // []) | index($agent)))' <<<"${list_json}" >/dev/null; then
+				observed_agents="$(jq -r --arg skill "${skill}" \
+					'[.[] | select(.name == $skill) | (.agents // [])[]] | unique | join(", ")' <<<"${list_json}")"
+				[[ -z ${observed_agents} ]] && observed_agents="not listed"
+				warn "npx-skills installed '${skill}', but global list does not show agent '${expected_agent}' (observed: ${observed_agents})"
+			fi
+		done
+	done
+}
+
+npx_skills_apply_cursor_global_workaround() {
+	local agents_csv="$1"
+	shift
+	local skill_filters=("$@")
+
+	${DRY_RUN} && return
+	[[ ${#skill_filters[@]} -eq 0 ]] && return
+
+	local agents=()
+	if [[ -n ${agents_csv} ]]; then
+		IFS=',' read -r -a agents <<<"${agents_csv}"
+	else
+		# shellcheck disable=SC2312
+		mapfile -t agents < <(target_agents)
+	fi
+
+	local wants_cursor=false agent
+	for agent in "${agents[@]}"; do
+		local resolved_agent
+		resolved_agent="$(resolve_agent "${agent}")"
+		[[ ${resolved_agent} == "cursor" ]] && wants_cursor=true
+	done
+	${wants_cursor} || return
+
+	# TODO/FIXME: remove this workaround once npx skills reliably links global
+	# Cursor installs into ~/.cursor/skills and defaults to symlink mode.
+	# Upstream tracking:
+	# - https://github.com/vercel-labs/skills/issues/421
+	# - https://github.com/vercel-labs/skills/issues/537
+	# - https://github.com/vercel-labs/skills/issues/745
+	# - https://github.com/vercel-labs/skills/pull/694
+	# - https://github.com/vercel-labs/skills/pull/799
+	local skill
+	for skill in "${skill_filters[@]}"; do
+		[[ -z ${skill} || ${skill} == "*" ]] && continue
+		local canonical="${HOME}/.agents/skills/${skill}"
+		local cursor_target="${HOME}/.cursor/skills/${skill}"
+		[[ -d ${canonical} ]] || continue
+
+		mkdir -p "${HOME}/.cursor/skills"
+		if [[ -L ${cursor_target} ]]; then
+			local existing
+			existing="$(readlink "${cursor_target}")"
+			[[ ${existing} == "${canonical}" ]] && continue
+			warn "Cursor skill link exists with unexpected target: ${cursor_target} -> ${existing}"
+			continue
+		fi
+		if [[ -e ${cursor_target} ]]; then
+			warn "Cursor skill already exists and is not a symlink: ${cursor_target}"
+			continue
+		fi
+		ln -s "${canonical}" "${cursor_target}"
+		info "Linked Cursor global skill workaround: ${cursor_target} -> ${canonical}"
+	done
+}
+
+npx_skills_add() {
+	local source="$1"
+	shift
+	npx_skills_add_for_agents "${source}" "" "$@"
+}
+
+npx_skills_add_for_agents() {
+	local source="$1" agents_csv="$2"
+	shift 2
+	local skill_filters=("$@")
+	local npx_skills_source
+	npx_skills_source="$(source_for_npx_skills_backend "${source}")"
+
+	local cmd=(npx --yes "${NPX_SKILLS_PACKAGE}" add "${npx_skills_source}" -g -y)
+	local agents
+	if [[ -n ${agents_csv} ]]; then
+		IFS=',' read -r -a agents <<<"${agents_csv}"
+	else
+		# shellcheck disable=SC2312
+		mapfile -t agents < <(target_agents)
+	fi
+	for agent in "${agents[@]}"; do
+		[[ -z ${agent} ]] && continue
+		local npx_agent
+		npx_agent="$(npx_skills_agent "${agent}")"
+		cmd+=(--agent "${npx_agent}")
+	done
+
+	if [[ ${#skill_filters[@]} -eq 0 ]]; then
+		if [[ -z ${FLAG_PATH} && ${source} != *"/tree/"* ]]; then
+			cmd+=(--skill "*")
+		fi
+	else
+		local skill
+		for skill in "${skill_filters[@]}"; do
+			[[ -z ${skill} ]] && continue
+			cmd+=(--skill "${skill}")
+		done
+	fi
+
+	run_or_preview "${cmd[@]}"
+	npx_skills_apply_cursor_global_workaround "${agents_csv}" "${skill_filters[@]}"
+	npx_skills_verify_install "${agents_csv}" "${skill_filters[@]}"
+}
+
+npx_skills_update() {
+	local target="${1-}"
+	local cmd=(npx --yes "${NPX_SKILLS_PACKAGE}" update)
+	[[ -n ${target} ]] && cmd+=("${target}")
+	run_or_preview "${cmd[@]}"
+}
+
+npx_skills_list() {
+	run_or_preview npx --yes "${NPX_SKILLS_PACKAGE}" list
+}
+
+npx_skills_remove() {
+	local target="$1"
+	run_or_preview npx --yes "${NPX_SKILLS_PACKAGE}" remove "${target}"
+}
+
+npx_skills_check() {
+	if ! command -v npx &>/dev/null; then
+		warn "npx: not installed (required for backend=npx-skills)"
+		return 1
+	fi
+	npx --yes "${NPX_SKILLS_PACKAGE}" check
 }
 
 # --- GitHub URL parsing ---
@@ -318,6 +596,15 @@ source_type_for_manifest_source() {
 	"") echo "unknown" ;;
 	*) echo "unknown" ;;
 	esac
+}
+
+source_key() {
+	local source="$1"
+	source="${source#https://github.com/}"
+	source="${source#http://github.com/}"
+	source="${source#github.com/}"
+	source="${source%.git}"
+	echo "${source}"
 }
 
 install_mode_for_source_type() {
@@ -543,9 +830,162 @@ update_manifest_skill() {
   "
 }
 
+# --- Declarative sync ---
+
+spec_rows() {
+	local spec_file="$1"
+	yq -o=json '.' "${spec_file}" | jq -r --arg backend "${BACKEND}" '
+		(.defaults // {}) as $defaults
+		| (.skills // [])[]
+		| (.source // empty) as $source
+		| select($source != "")
+		| (.skills // .skill // ["*"]) as $skill_filter
+		| [
+			$source,
+			(.ref // $defaults.ref // ""),
+			(.backend // $defaults.backend // $backend),
+			(.scope // $defaults.scope // "global"),
+			((.agents // $defaults.agents // []) | if type == "array" then join(",") else . end),
+			($skill_filter | if type == "array" then join(",") else . end)
+		]
+		| @tsv
+	'
+}
+
+sync_npx_skills_entry() {
+	local source="$1" ref="$2" agents_csv="$3" skills_csv="$4"
+	local saved_ref="${FLAG_REF}" saved_path="${FLAG_PATH}"
+	FLAG_REF="${ref}"
+	FLAG_PATH=""
+
+	local skills=()
+	if [[ -n ${skills_csv} ]]; then
+		IFS=',' read -r -a skills <<<"${skills_csv}"
+	fi
+
+	npx_skills_add_for_agents "${source}" "${agents_csv}" "${skills[@]}"
+
+	FLAG_REF="${saved_ref}"
+	FLAG_PATH="${saved_path}"
+}
+
+sync_legacy_entry() {
+	local source="$1" ref="$2" agents_csv="$3" skills_csv="$4"
+	if [[ -n ${skills_csv} && ${skills_csv} != "*" ]]; then
+		warn "Legacy backend cannot filter named skills yet; installing from source/path for ${source}"
+	fi
+
+	local saved_backend="${BACKEND}" saved_ref="${FLAG_REF}" saved_path="${FLAG_PATH}" saved_agent="${TARGET_AGENT}"
+	BACKEND="legacy"
+	FLAG_REF="${ref}"
+	FLAG_PATH=""
+
+	if [[ -n ${agents_csv} ]]; then
+		local agents agent
+		IFS=',' read -r -a agents <<<"${agents_csv}"
+		for agent in "${agents[@]}"; do
+			[[ -z ${agent} ]] && continue
+			TARGET_AGENT="${agent}"
+			cmd_install_source "sync" "${source}"
+		done
+	else
+		TARGET_AGENT=""
+		cmd_install_source "sync" "${source}"
+	fi
+
+	BACKEND="${saved_backend}"
+	FLAG_REF="${saved_ref}"
+	FLAG_PATH="${saved_path}"
+	TARGET_AGENT="${saved_agent}"
+}
+
+sync_spec_file() {
+	local spec_file="$1"
+	[[ -f ${spec_file} ]] || die "Spec file not found: ${spec_file}"
+	require_cmd yq
+	require_cmd jq
+
+	info "Sync spec: ${spec_file}"
+	local source ref entry_backend _scope agents_csv skills_csv
+	while IFS=$'\t' read -r source ref entry_backend _scope agents_csv skills_csv; do
+		[[ -z ${source} ]] && continue
+		case "${entry_backend}" in
+		npx-skills)
+			require_cmd npx
+			sync_npx_skills_entry "${source}" "${ref}" "${agents_csv}" "${skills_csv}"
+			;;
+		legacy)
+			require_cmd git
+			sync_legacy_entry "${source}" "${ref}" "${agents_csv}" "${skills_csv}"
+			;;
+		*)
+			die "Unknown backend in ${spec_file} for ${source}: ${entry_backend}"
+			;;
+		esac
+	done < <(
+		# shellcheck disable=SC2312
+		spec_rows "${spec_file}"
+	)
+}
+
+sync_profile() {
+	local profile="$1"
+	resolve_profile_name "${profile}" >/dev/null
+	local spec
+	spec="$(profile_spec_path "${profile}")"
+	[[ -f ${spec} || -L ${spec} ]] || die "No spec linked for profile: ${profile} (run 'ai-skills profile link ${profile} <spec.yaml>')"
+
+	sync_spec_file "${spec}"
+
+	local fragments_dir
+	fragments_dir="$(profile_fragments_dir "${profile}")"
+	if [[ -d ${fragments_dir} ]]; then
+		local fragment
+		for fragment in "${fragments_dir}"/*.yaml; do
+			[[ -f ${fragment} ]] || continue
+			sync_spec_file "${fragment}"
+		done
+	fi
+}
+
+sync_from_path() {
+	local source_path="$1"
+	source_path="${source_path/#\~/${HOME}}"
+	if [[ -f ${source_path} ]]; then
+		sync_spec_file "${source_path}"
+	elif [[ -d ${source_path} ]]; then
+		local spec
+		for spec in "${source_path}"/*.yaml "${source_path}"/profiles/*.yaml; do
+			[[ -f ${spec} ]] || continue
+			sync_spec_file "${spec}"
+		done
+	else
+		die "Sync source not found: ${source_path}"
+	fi
+}
+
 # --- Subcommands ---
 
 cmd_bootstrap() {
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--agent)
+			TARGET_AGENT="$2"
+			shift 2
+			;;
+		--backend)
+			set_backend "$2"
+			shift 2
+			;;
+		--dry-run)
+			DRY_RUN=true
+			shift
+			;;
+		-*) die "Unknown option: $1" ;;
+		*) die "Unknown argument for bootstrap: $1" ;;
+		esac
+	done
+
 	echo ""
 	echo "$(_bold "ai-skills bootstrap")"
 	echo ""
@@ -591,13 +1031,17 @@ cmd_bootstrap() {
 		local skill_name
 		skill_name="$(basename "$skill_dir")"
 
-		for agent in "${agents[@]}"; do
-			install_skill_to_agent "$skill_dir" "$agent" "core/$skill_name"
-		done
-
 		local sid="core/$skill_name"
-		if ! $DRY_RUN; then
-			update_manifest_skill "$sid" "local/ai-skills-cli" "skills/core/$skill_name" "local" "${agents[@]}"
+		if [[ ${BACKEND} == "npx-skills" ]]; then
+			require_cmd npx
+			npx_skills_add "${skill_dir%/}"
+		else
+			for agent in "${agents[@]}"; do
+				install_skill_to_agent "${skill_dir}" "${agent}" "core/${skill_name}"
+			done
+			if ! $DRY_RUN; then
+				update_manifest_skill "$sid" "local/ai-skills-cli" "skills/core/$skill_name" "local" "${agents[@]}"
+			fi
 		fi
 	done
 
@@ -631,6 +1075,10 @@ cmd_install_source() {
 			FLAG_PROFILE="$2"
 			shift 2
 			;;
+		--backend)
+			set_backend "$2"
+			shift 2
+			;;
 		--dry-run)
 			DRY_RUN=true
 			shift
@@ -651,6 +1099,14 @@ cmd_install_source() {
 	require_cmd git
 	require_cmd jq
 	ensure_state_dir
+
+	if [[ ${BACKEND} == "npx-skills" ]]; then
+		require_cmd npx
+		npx_skills_add "${source}"
+		echo ""
+		info "Delegated install to npx skills (backend=npx-skills)"
+		return
+	fi
 
 	local repo_dir owner repo ref path source_str source_type install_mode
 
@@ -732,6 +1188,10 @@ cmd_update() {
 			FLAG_PROFILE="$2"
 			shift 2
 			;;
+		--backend)
+			set_backend "$2"
+			shift 2
+			;;
 		--dry-run)
 			DRY_RUN=true
 			shift
@@ -751,6 +1211,14 @@ cmd_update() {
 	require_cmd git
 	require_cmd jq
 	ensure_state_dir
+
+	if [[ ${BACKEND} == "npx-skills" ]]; then
+		require_cmd npx
+		npx_skills_update "${target_sid}"
+		echo ""
+		info "Delegated update to npx skills (backend=npx-skills)"
+		return
+	fi
 
 	local sids=()
 	if [[ -n $target_sid ]]; then
@@ -846,6 +1314,17 @@ cmd_update() {
 }
 
 cmd_doctor() {
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--backend)
+			set_backend "$2"
+			shift 2
+			;;
+		-*) die "Unknown option: $1" ;;
+		*) die "Unknown argument for doctor: $1" ;;
+		esac
+	done
+
 	echo ""
 	echo "$(_bold "ai-skills doctor")"
 	echo ""
@@ -875,6 +1354,16 @@ cmd_doctor() {
 		fi
 	else
 		warn "gh: not installed (optional, needed for private repos)"
+	fi
+
+	if [[ ${BACKEND} == "npx-skills" ]]; then
+		if command -v npx &>/dev/null; then
+			info "npx: available"
+		else
+			err "npx: not found (required for backend=npx-skills)"
+			fixes+=("Install Node.js/npm so npx is available")
+			issues=$((issues + 1))
+		fi
 	fi
 
 	# --- State ---
@@ -986,6 +1475,53 @@ cmd_doctor() {
 		done
 	fi
 
+	# --- Declarative specs vs manifest ---
+
+	if [[ -f ${MANIFEST} && -d ${PROFILE_SPECS_DIR} ]]; then
+		if command -v yq &>/dev/null; then
+			declare -A spec_sources=()
+			local spec
+			for spec in "${PROFILE_SPECS_DIR}"/*.yaml "${PROFILE_FRAGMENTS_DIR}"/*/*.yaml; do
+				[[ -f ${spec} || -L ${spec} ]] || continue
+				while IFS= read -r source; do
+					[[ -z ${source} ]] && continue
+					local key
+					key="$(source_key "${source}")"
+					spec_sources["${key}"]=1
+				done < <(yq -o=json '.' "${spec}" | jq -r '.skills[]?.source // empty' 2>/dev/null || true)
+			done
+
+			local manifest_sources=()
+			# shellcheck disable=SC2310,SC2312
+			mapfile -t manifest_sources < <(manifest_get '.skills[]?.source // empty' 2>/dev/null | sort -u || true)
+			for source in "${manifest_sources[@]}"; do
+				[[ -z ${source} || ${source} == "local/ai-skills-cli" ]] && continue
+				local key
+				key="$(source_key "${source}")"
+				if [[ -z ${spec_sources[${key}]-} ]]; then
+					warn "Installed source not represented in profile specs: ${source}"
+					fixes+=("Add ${source} to ~/.ai-skills/profiles/<profile>.yaml or remove it if no longer needed")
+					issues=$((issues + 1))
+				fi
+			done
+		else
+			warn "yq: not installed (skipping declarative spec drift checks)"
+		fi
+	fi
+
+	if [[ ${BACKEND} == "npx-skills" ]]; then
+		if command -v npx &>/dev/null; then
+			# shellcheck disable=SC2310
+			if npx_skills_check; then
+				info "npx skills check: passed"
+			else
+				warn "npx skills check: reported issues"
+				fixes+=("npx skills check")
+				issues=$((issues + 1))
+			fi
+		fi
+	fi
+
 	# --- Summary ---
 
 	echo ""
@@ -1006,11 +1542,32 @@ cmd_doctor() {
 }
 
 cmd_list() {
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--backend)
+			set_backend "$2"
+			shift 2
+			;;
+		--dry-run)
+			DRY_RUN=true
+			shift
+			;;
+		-*) die "Unknown option: $1" ;;
+		*) die "Unknown argument for list: $1" ;;
+		esac
+	done
+
 	echo ""
 	echo "$(_bold "ai-skills list")"
 	echo ""
 
 	ensure_state_dir
+
+	if [[ ${BACKEND} == "npx-skills" ]]; then
+		require_cmd npx
+		npx_skills_list
+		return
+	fi
 
 	if [[ ! -f $MANIFEST ]]; then
 		warn "No manifest found. Run 'ai-skills bootstrap' first."
@@ -1065,7 +1622,24 @@ cmd_self_update() {
 }
 
 cmd_remove() {
-	local sid="${1-}"
+	local sid=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--backend)
+			set_backend "$2"
+			shift 2
+			;;
+		--dry-run)
+			DRY_RUN=true
+			shift
+			;;
+		-*) die "Unknown option: $1" ;;
+		*)
+			sid="$1"
+			shift
+			;;
+		esac
+	done
 	[[ -z $sid ]] && die "Usage: ai-skills remove <source-id>"
 
 	echo ""
@@ -1073,6 +1647,12 @@ cmd_remove() {
 	echo ""
 
 	ensure_state_dir
+
+	if [[ ${BACKEND} == "npx-skills" ]]; then
+		require_cmd npx
+		npx_skills_remove "${sid}"
+		return
+	fi
 
 	local entry
 	entry="$(jq -r --arg sid "$sid" '.skills[$sid] // empty' "$MANIFEST" 2>/dev/null)"
@@ -1241,21 +1821,98 @@ cmd_profile() {
 		info "Profile $(_bold "$name") removed"
 		;;
 
+	link)
+		local name="${1-}" spec="${2-}"
+		[[ -z ${name} || -z ${spec} ]] && die "Usage: ai-skills profile link <name> <spec.yaml>"
+		resolve_profile_name "${name}" >/dev/null
+		local resolved_spec target
+		resolved_spec="$(resolve_existing_file "${spec}")"
+		target="$(profile_spec_path "${name}")"
+		if ${DRY_RUN}; then
+			info "[dry-run] Would link ${target} -> ${resolved_spec}"
+		else
+			mkdir -p "${PROFILE_SPECS_DIR}"
+			ln -sfn "${resolved_spec}" "${target}"
+			local bold_name
+			bold_name="$(_bold "${name}")"
+			info "Linked profile ${bold_name} spec: ${target} -> ${resolved_spec}"
+		fi
+		;;
+
+	unlink)
+		local name="${1-}"
+		[[ -z ${name} ]] && die "Usage: ai-skills profile unlink <name>"
+		resolve_profile_name "${name}" >/dev/null
+		local target
+		target="$(profile_spec_path "${name}")"
+		if [[ ! -e ${target} && ! -L ${target} ]]; then
+			warn "No linked spec for profile: ${name}"
+			return
+		fi
+		if ${DRY_RUN}; then
+			info "[dry-run] Would remove ${target}"
+		else
+			rm -f "${target}"
+			local bold_name
+			bold_name="$(_bold "${name}")"
+			info "Unlinked profile ${bold_name} spec"
+		fi
+		;;
+
+	sources)
+		echo ""
+		_bold "ai-skills profile sources"
+		echo ""
+		ensure_state_dir
+		mkdir -p "${PROFILE_SPECS_DIR}"
+		local default_p profiles
+		default_p="$(get_default_profile)"
+		profiles="$(config_get '.profiles | keys[]')"
+		while IFS= read -r name; do
+			[[ -z ${name} ]] && continue
+			local target source marker=""
+			target="$(profile_spec_path "${name}")"
+			if [[ ${name} == "${default_p}" ]]; then
+				local green_default
+				green_default="$(_green "(default)")"
+				marker=" ${green_default}"
+			fi
+			if [[ -L ${target} ]]; then
+				source="$(readlink "${target}")"
+			elif [[ -f ${target} ]]; then
+				source="${target}"
+			else
+				source="(not linked)"
+			fi
+			local bold_name dim_source
+			bold_name="$(_bold "${name}")"
+			dim_source="$(_dim "${source}")"
+			echo "  ${bold_name}${marker}"
+			echo "    spec: ${dim_source}"
+		done <<<"${profiles}"
+		echo ""
+		;;
+
 	"" | help)
 		cat <<PROF_EOF
 
 $(_bold "ai-skills profile") — manage git credential profiles
 
 $(_bold "SUBCOMMANDS")
-  list                       Show all profiles
-  default <name>             Set the default profile
-  add <name> [--repos-dir]   Add a new profile
-  remove <name>              Remove a profile
+  list                         Show all profiles
+  default <name>               Set the default profile
+  add <name> [--repos-dir]     Add a new profile
+  remove <name>                Remove a profile
+  link <name> <spec.yaml>      Link a declarative profile spec
+  unlink <name>                Remove a linked profile spec
+  sources                      Show profile spec links
 
 $(_bold "EXAMPLES")
   ai-skills profile list
   ai-skills profile add work --repos-dir ~/.ai-skills/repos/work
   ai-skills profile default work
+  ai-skills profile link personal ~/dotfiles/tools/ai-skills/profiles/personal.yaml
+  ai-skills profile sources
   ai-skills add owner/repo --profile work
 
 PROF_EOF
@@ -1263,6 +1920,64 @@ PROF_EOF
 
 	*) die "Unknown profile subcommand: $subcmd (run 'ai-skills profile help')" ;;
 	esac
+}
+
+cmd_sync() {
+	local from_path="" all_profiles=false
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--from)
+			from_path="$2"
+			shift 2
+			;;
+		--profile)
+			FLAG_PROFILE="$2"
+			shift 2
+			;;
+		--all-profiles)
+			all_profiles=true
+			shift
+			;;
+		--backend)
+			set_backend "$2"
+			shift 2
+			;;
+		--dry-run)
+			DRY_RUN=true
+			shift
+			;;
+		-*) die "Unknown option: $1" ;;
+		*) die "Unknown argument for sync: $1" ;;
+		esac
+	done
+
+	echo ""
+	_bold "ai-skills sync"
+	echo ""
+
+	ensure_state_dir
+
+	if [[ -n ${from_path} ]]; then
+		sync_from_path "${from_path}"
+	elif ${all_profiles}; then
+		mkdir -p "${PROFILE_SPECS_DIR}"
+		local spec found=false
+		for spec in "${PROFILE_SPECS_DIR}"/*.yaml; do
+			[[ -f ${spec} || -L ${spec} ]] || continue
+			found=true
+			local profile_name
+			profile_name="$(basename "${spec}" .yaml)"
+			sync_profile "${profile_name}"
+		done
+		${found} || die "No profile specs found in ${PROFILE_SPECS_DIR}"
+	else
+		local profile
+		profile="$(resolve_profile)"
+		sync_profile "${profile}"
+	fi
+
+	echo ""
+	info "Sync complete"
 }
 
 cmd_help() {
@@ -1279,12 +1994,15 @@ $(_bold "SKILL COMMANDS")
   remove <source-id>             Remove an installed skill from agents and manifest
   update [source-id|owner/repo]  Re-fetch and reinstall skills
   list                           Show installed skills from manifest
+  sync                           Apply declarative profile specs
 
 $(_bold "PROFILES")
   profile list        Show configured profiles
   profile default     Set the default profile
   profile add         Add a new profile
   profile remove      Remove a profile
+  profile link        Link a profile to a spec file
+  profile sources     Show linked profile specs
 
 $(_bold "DIAGNOSTICS")
   doctor              Check health of skills setup
@@ -1298,6 +2016,7 @@ $(_bold "OPTIONS")
   --ref <ref>         Pin to a branch, tag, or commit SHA
   --path <path>       Specify a subpath within the repository
   --profile <name>    Use a specific profile for this command
+  --backend <name>    Backend to use: legacy or npx-skills (default: legacy)
   --dry-run           Show what would happen without making changes
   --debug             Enable debug output
 
@@ -1317,10 +2036,15 @@ $(_bold "EXAMPLES")
   ai-skills update
   ai-skills update owner/repo
   ai-skills update owner/repo/skills/my-skill
+  ai-skills profile link personal ~/dotfiles/tools/ai-skills/profiles/personal.yaml
+  ai-skills sync --dry-run
   ai-skills doctor
 
 $(_bold "ENVIRONMENT")
   AI_SKILLS_HOME      Override state directory (default: ~/.ai-skills)
+  AI_SKILLS_BACKEND   Backend to use: legacy or npx-skills
+  AI_SKILLS_NPX_PACKAGE
+                      Package spec used by npx-skills backend (default: skills)
   AI_SKILLS_DEBUG     Set to 1 for debug output
 
 EOF
@@ -1347,6 +2071,10 @@ main() {
 			;;
 		--profile)
 			FLAG_PROFILE="$2"
+			shift 2
+			;;
+		--backend)
+			set_backend "$2"
 			shift 2
 			;;
 		--dry-run)
@@ -1389,6 +2117,7 @@ main() {
 	update) cmd_update "$@" ;;
 	remove) cmd_remove "$@" ;;
 	list) cmd_list "$@" ;;
+	sync) cmd_sync "$@" ;;
 	profile) cmd_profile "$@" ;;
 	doctor) cmd_doctor "$@" ;;
 	self-update) cmd_self_update "$@" ;;

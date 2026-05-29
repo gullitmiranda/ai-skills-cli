@@ -4,6 +4,20 @@ Planned features, improvements, and tech debt for ai-skills-cli.
 
 ## Planned Features
 
+- [x] **npx-skills backend wrapper (opt-in)** — keep the legacy installer as the default while allowing generic lifecycle commands to delegate to `npx skills` with `AI_SKILLS_BACKEND=npx-skills` or `--backend npx-skills`.
+  - [x] `add` / `install` delegate to `npx skills add`
+  - [x] `update` delegates to `npx skills update`
+  - [x] `list` delegates to `npx skills list`
+  - [x] `remove` delegates to `npx skills remove`
+  - [x] `doctor --backend npx-skills` checks `npx` and runs `npx skills check`
+  - [ ] Decide when, if ever, the `npx-skills` backend should become the default.
+- [x] **Declarative profile sync (experimental)** — version desired skills per profile and let `ai-skills sync` apply them idempotently.
+  - [x] `ai-skills profile link <profile> <spec.yaml>` links versioned specs into `~/.ai-skills/profiles/`
+  - [x] `ai-skills profile sources` lists profile spec links
+  - [x] `ai-skills sync` applies the default profile spec
+  - [x] `ai-skills sync --profile <name>`, `--all-profiles`, and `--from <file-or-dir>` cover explicit sync workflows
+  - [x] `~/.ai-skills/profiles.d/<profile>/*.yaml` supports additive fragments
+  - [ ] Add richer drift detection against installed state.
 - [ ] **Cache Edit Guardrails** — make it impossible (or loudly obvious) to commit/push directly inside `~/.ai-skills/repos/<profile>/<owner>/<repo>/`. Today, agents and humans can — and do — edit through symlinks (e.g. `~/.cursor/skills/<name>`), commit on the cache repo, and even push to the upstream from there. The cache is meant to be a managed clone, not a working repo. Required pieces:
   - [x] Core skill `skills/core/ai-skills-cache-safety/SKILL.md` shipped via `ai-skills bootstrap`: agent-side rule that detects cache paths (prefix + `.ai-skills-cache` marker) and refuses git writes with a redirect procedure.
   - [ ] On clone (in `ai-skills add`), drop a `.ai-skills-cache` marker file at the cached repo root with metadata (source URL, profile, cached-at). The marker is also what the core skill above keys off when the path prefix check is ambiguous.

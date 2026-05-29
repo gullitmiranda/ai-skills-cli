@@ -2,6 +2,10 @@
 
 Profiles route git credentials when cloning skill repositories. Each profile maps to a subdirectory under `~/.ai-skills/repos/`, allowing gitconfig `includeIf` rules to apply the correct identity and credentials per profile.
 
+Profiles can also point at declarative skill specs. A spec describes the desired
+skills for that profile and can be versioned in whichever repository owns that
+context.
+
 ## Why Profiles Exist
 
 Skill repositories may live on different GitHub accounts (personal, work, org). Without profiles, all clones land in the same directory and git uses a single credential context. Profiles solve this by separating repos into profile-scoped directories that gitconfig can match independently.
@@ -12,6 +16,12 @@ Skill repositories may live on different GitHub accounts (personal, work, org). 
 ~/.ai-skills/
 ├── config.json                         # profiles configuration
 ├── manifest.json
+├── profiles/
+│   ├── personal.yaml -> ~/dotfiles/tools/ai-skills/profiles/personal.yaml
+│   └── work.yaml -> ~/private-skills/profiles/work.yaml
+├── profiles.d/
+│   └── personal/
+│       └── local-experiments.yaml
 └── repos/
     ├── personal/                       # profile: personal
     │   └── gullitmiranda/
@@ -33,6 +43,11 @@ When a remote source is installed with `--profile`, that profile is persisted in
 one update can refresh personal and work repositories without switching the
 default profile first.
 
+When `ai-skills sync` runs without `--from`, it reads the default profile from
+`config.json` and applies `~/.ai-skills/profiles/<profile>.yaml`. Any files in
+`~/.ai-skills/profiles.d/<profile>/*.yaml` are treated as optional additive
+fragments for that same profile.
+
 ## CLI Commands
 
 ```bash
@@ -45,6 +60,14 @@ ai-skills profile add work --repos-dir ~/.ai-skills/repos/work
 
 # Set default profile
 ai-skills profile default personal
+
+# Link declarative specs
+ai-skills profile link personal ~/dotfiles/tools/ai-skills/profiles/personal.yaml
+ai-skills profile sources
+
+# Apply profile specs
+ai-skills sync --dry-run
+ai-skills sync --profile personal
 
 # Install using a specific profile
 ai-skills add owner/repo --profile work
@@ -126,6 +149,37 @@ Profiles are stored in `~/.ai-skills/config.json`:
 - `default_profile`: used when `--profile` is not specified
 - `profiles.<name>.repos_dir`: override the repos directory for this profile (default: `~/.ai-skills/repos/<name>`)
 
+## Profile Specs
+
+Profile specs are YAML files linked into `~/.ai-skills/profiles/`:
+
+```bash
+ai-skills profile link personal ~/dotfiles/tools/ai-skills/profiles/personal.yaml
+ai-skills profile link work ~/private-skills/profiles/work.yaml
+```
+
+Example:
+
+```yaml
+version: 1
+profile: personal
+defaults:
+  backend: npx-skills
+  scope: global
+  agents:
+    - cursor
+    - claude-code
+skills:
+  - source: vercel-labs/agent-skills
+    ref: main
+    skills:
+      - web-design-guidelines
+```
+
+Use `profiles/<profile>.yaml` for the primary desired state. Use
+`profiles.d/<profile>/*.yaml` only for additive fragments such as local
+experiments or machine-specific extras.
+
 ## Typical Setup
 
 1. Add profiles:
@@ -138,7 +192,14 @@ ai-skills profile default personal
 
 2. Configure gitconfig `includeIf` rules (see examples above).
 
-3. Install skills with the appropriate profile:
+3. Link versioned specs for profiles you want to sync:
+
+```bash
+ai-skills profile link personal ~/dotfiles/tools/ai-skills/profiles/personal.yaml
+ai-skills profile sources
+```
+
+4. Install skills with the appropriate profile:
 
 ```bash
 ai-skills add my-user/my-skills                          # uses default (personal)
@@ -148,7 +209,14 @@ ai-skills add my-org/org-skills --profile work            # uses work credential
 After that, `ai-skills update` will reuse the profile recorded for each remote
 skill source.
 
-4. Verify with `--debug`:
+5. Or apply the declarative spec:
+
+```bash
+ai-skills sync --dry-run
+ai-skills sync
+```
+
+6. Verify with `--debug`:
 
 ```bash
 ai-skills add my-org/repo --profile work --debug

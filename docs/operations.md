@@ -47,20 +47,52 @@ Preview without making changes:
 ai-skills add owner/repo --dry-run
 ```
 
-## Remove a Skill (v1)
-
-Removal is manual in v1. Two steps:
-
-1. Delete the entry from `~/.ai-skills/manifest.json`
-2. Remove the skill directory from each agent dir:
+Use the upstream `npx skills` backend experimentally:
 
 ```bash
-rm -rf ~/.cursor/skills/<skill-name>
-rm -rf ~/.claude/skills/<skill-name>
-rm -rf ~/.codex/skills/<skill-name>
+ai-skills --backend npx-skills add owner/repo --dry-run
+AI_SKILLS_BACKEND=npx-skills ai-skills add owner/repo
 ```
 
-A `remove` subcommand is planned for a future version.
+## Sync Declarative Specs
+
+Link a versioned spec to a profile:
+
+```bash
+ai-skills profile link personal ~/dotfiles/tools/ai-skills/profiles/personal.yaml
+ai-skills profile sources
+```
+
+Then apply the default profile:
+
+```bash
+ai-skills sync --dry-run
+ai-skills sync
+```
+
+`ai-skills sync` reads `~/.ai-skills/profiles/<profile>.yaml` for the selected
+profile and additive fragments from `~/.ai-skills/profiles.d/<profile>/*.yaml`.
+Use `--profile <name>`, `--all-profiles`, or `--from <file-or-dir>` for explicit
+sync runs.
+
+After a real `npx-skills` sync, the wrapper checks `npx skills list -g --json`
+for named skills and warns when the upstream state does not show the requested
+agent. This catches cases where `npx skills` materializes a skill in a shared
+directory but reports a different agent association than the profile requested.
+
+## Remove a Skill
+
+Remove a skill from managed agent directories and the legacy manifest:
+
+```bash
+ai-skills remove owner/repo/skills/my-skill
+```
+
+With the experimental `npx-skills` backend, removal is delegated upstream:
+
+```bash
+ai-skills --backend npx-skills remove web-design-guidelines
+```
 
 ## List Installed Skills
 
@@ -79,10 +111,12 @@ ai-skills doctor
 Doctor verifies:
 
 - Required tools (`git`, `jq`) are installed
+- `npx` is available when `--backend npx-skills` is selected
 - `gh` authentication status
 - State directory and manifest integrity
 - Agent directories exist and contain expected skills
 - Manifest entries match filesystem state
+- Installed legacy manifest sources are represented in linked profile specs when `yq` is available
 
 ## Rollback
 

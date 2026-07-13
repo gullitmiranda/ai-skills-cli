@@ -845,7 +845,7 @@ update_manifest_skill() {
 	if [[ ${source_type} == "remote-git" ]]; then
 		local profile
 		profile="$(resolve_profile)"
-		profile_json="$(jq -rn --arg profile "${profile}" '$profile')"
+		profile_json="$(jq -n --arg profile "${profile}" '$profile')"
 	fi
 
 	manifest_set "

@@ -896,7 +896,7 @@ spec_rows() {
 			((.agents // $defaults.agents // []) | if type == "array" then join(",") else . end),
 			($skill_filter | if type == "array" then join(",") else . end)
 		]
-		| @tsv
+		| join("\u001f")
 	'
 }
 
@@ -953,7 +953,7 @@ sync_spec_file() {
 
 	info "Sync spec: ${spec_file}"
 	local source ref entry_backend _scope agents_csv skills_csv
-	while IFS=$'\t' read -r source ref entry_backend _scope agents_csv skills_csv; do
+	while IFS=$'\x1f' read -r source ref entry_backend _scope agents_csv skills_csv; do
 		[[ -z ${source} ]] && continue
 		case "${entry_backend}" in
 		npx-skills)

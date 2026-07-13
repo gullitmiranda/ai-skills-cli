@@ -36,6 +36,17 @@ link_target="$(readlink "${HOME}/.cursor/skills/example")"
 }
 
 mkdir -p "${AI_SKILLS_HOME}/profiles"
+cat >"${AI_SKILLS_HOME}/config.json" <<EOF
+{
+  "version": 1,
+  "default_profile": "work",
+  "profiles": {
+    "work": {
+      "repos_dir": "${TMP_DIR}/repos"
+    }
+  }
+}
+EOF
 cat >"${AI_SKILLS_HOME}/profiles/work.yaml" <<EOF
 version: 1
 profile: work
@@ -47,6 +58,12 @@ defaults:
 skills:
   - source: ${REPO_DIR}
 EOF
+
+sync_output="$(${BIN} sync --profile work --dry-run 2>&1)"
+if [[ ${sync_output} == *"Unknown backend"* ]]; then
+	printf "Sync misparsed an empty ref field.\nOutput:\n%s\n" "${sync_output}" >&2
+	exit 1
+fi
 
 doctor_output="$(${BIN} doctor 2>&1 || true)"
 if [[ ${doctor_output} == *"Installed source not represented in profile specs: local:${REPO_DIR}"* ]]; then

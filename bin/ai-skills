@@ -848,11 +848,13 @@ install_skill_to_agent() {
 update_manifest_skill() {
 	local sid="$1" source_str="$2" path="$3" ref="$4"
 	shift 4
-	local agents_json="[]"
+	local agents_json
+	agents_json="$(manifest_get ".skills[\"${sid}\"].agents // []" 2>/dev/null)"
+	[[ -n ${agents_json} ]] || agents_json='[]'
 	local source_type profile_json="null"
 
 	for a in "$@"; do
-		agents_json="$(echo "$agents_json" | jq --arg a "$a" '. + [$a]')"
+		agents_json="$(echo "$agents_json" | jq --arg a "$a" '. + [$a] | unique')"
 	done
 
 	local now

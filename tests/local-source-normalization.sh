@@ -55,6 +55,7 @@ defaults:
   scope: global
   agents:
     - cursor
+    - claude
 skills:
   - source: ${REPO_DIR}
 EOF
@@ -64,6 +65,21 @@ if [[ ${sync_output} == *"Unknown backend"* ]]; then
 	printf "Sync misparsed an empty ref field.\nOutput:\n%s\n" "${sync_output}" >&2
 	exit 1
 fi
+
+sync_output="$(${BIN} sync --profile work 2>&1)"
+if ! jq -e --arg source "local:${REPO_DIR}" '
+	any(.skills[]; .source == $source and
+		((.agents | index("cursor")) != null) and
+		((.agents | index("claude")) != null))
+' "${AI_SKILLS_HOME}/manifest.json" >/dev/null; then
+	printf "Manifest did not preserve all agents for a local source.\nOutput:\n%s\n" "${sync_output}" >&2
+	exit 1
+fi
+
+[[ -L "${HOME}/.claude/skills/example" ]] || {
+	printf "Expected local skill symlink for Claude.\nOutput:\n%s\n" "${sync_output}" >&2
+	exit 1
+}
 
 doctor_output="$(${BIN} doctor 2>&1 || true)"
 if [[ ${doctor_output} == *"Installed source not represented in profile specs: local:${REPO_DIR}"* ]]; then

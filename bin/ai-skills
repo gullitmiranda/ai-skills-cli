@@ -550,11 +550,12 @@ github_repo_selector_source() {
 
 is_local_path() {
 	local input="$1"
-	[[ $input == /* || $input == ~* || $input == ./* || $input == ../* || $input == . || $input == .. ]]
+	[[ ${input} == local:* || $input == /* || $input == ~* || $input == ./* || $input == ../* || $input == . || $input == .. ]]
 }
 
 resolve_local_repo() {
 	local input="$1"
+	input="${input#local:}"
 	input="${input/#\~/$HOME}"
 	local abs_path
 	abs_path="$(cd "$input" 2>/dev/null && pwd)" || die "Directory not found: $input"
@@ -599,8 +600,25 @@ source_type_for_manifest_source() {
 	esac
 }
 
+canonical_local_source_key() {
+	local source="$1"
+	source="${source#local:}"
+	source="${source/#\~/${HOME}}"
+	if [[ -d ${source} ]]; then
+		source="$(cd "${source}" && pwd -P)"
+	fi
+	printf "local:%s\n" "${source}"
+}
+
 source_key() {
 	local source="$1"
+	case "${source}" in
+	local:* | /* | ~* | ./* | ../* | . | ..)
+		canonical_local_source_key "${source}"
+		return
+		;;
+	*) ;;
+	esac
 	source="${source#https://github.com/}"
 	source="${source#http://github.com/}"
 	source="${source#github.com/}"

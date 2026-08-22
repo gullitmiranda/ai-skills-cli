@@ -18,6 +18,11 @@ Once you find an `owner/repo` you want, install it with `ai-skills install owner
 Skill repositories on GitHub contain `SKILL.md` files following the [agentskills.io spec](https://agentskills.io/specification). The CLI clones them, discovers skills, and symlinks them into the right agent directories on your machine. Changes you make to installed skills propagate back to the source repo.
 
 ```
+
+By default, `ai-skills` still uses its legacy installer. An experimental
+`npx-skills` backend can delegate generic install/update/list/remove operations
+to the upstream `npx skills` CLI while keeping local `ai-skills` policy,
+profiles, bootstrap, and diagnostics.
 GitHub                          Local machine
 ──────                          ─────────────
 owner/my-skills                 ~/.cursor/skills/my-skill/SKILL.md
@@ -81,6 +86,10 @@ ai-skills add owner/repo --profile work
 
 # Preview without installing
 ai-skills add owner/repo --dry-run
+
+# Experimental: delegate install to npx skills
+ai-skills --backend npx-skills add owner/repo --dry-run
+AI_SKILLS_BACKEND=npx-skills ai-skills add owner/repo
 ```
 
 Supported source formats:
@@ -111,6 +120,69 @@ ai-skills update owner/repo/skills/my-skill
 ai-skills remove owner/repo/skills/my-skill
 ```
 
+### Declarative sync
+
+Profiles can also point at versioned YAML specs. The spec is the desired state
+("what should be installed"); `~/.ai-skills/manifest.json` remains operational
+state ("what was installed by the legacy backend").
+
+Declarative sync requires `yq` in addition to the base `git`/`jq`
+requirements. The experimental `npx-skills` backend also requires `node`/`npx`.
+Set `AI_SKILLS_NPX_PACKAGE` to pin the npm package that `npx` executes, for
+example `AI_SKILLS_NPX_PACKAGE=skills@1.5.7`.
+
+After a real `npx-skills` install, `ai-skills` verifies named skills with
+`npx skills list -g --json` and warns if the installed skill is not associated
+with the agent declared in the profile.
+
+```bash
+# Link a profile to a versioned spec
+ai-skills profile link personal ~/dotfiles/tools/ai-skills/profiles/personal.yaml
+
+# Show profile -> spec mappings
+ai-skills profile sources
+
+# Apply the default profile spec
+ai-skills sync --dry-run
+ai-skills sync
+
+# Apply a specific profile or every linked profile
+ai-skills sync --profile personal
+ai-skills sync --all-profiles
+```
+
+Canonical local layout:
+
+```text
+~/.ai-skills/
+  config.json
+  manifest.json
+  profiles/
+    personal.yaml  # often a symlink into a dotfiles repo
+    private.yaml   # often a symlink into a private repo
+  profiles.d/
+    personal/
+      local-experiments.yaml
+```
+
+Example profile spec:
+
+```yaml
+version: 1
+profile: personal
+defaults:
+  backend: npx-skills
+  scope: global
+  agents:
+    - cursor
+    - claude-code
+skills:
+  - source: vercel-labs/agent-skills
+    ref: main
+    skills:
+      - web-design-guidelines
+```
+
 ### Diagnostics and maintenance
 
 ```bash
@@ -129,6 +201,7 @@ Profiles route git credentials per skill source by cloning into per-profile dire
 ai-skills profile list
 ai-skills profile add work --repos-dir ~/.ai-skills/repos/work
 ai-skills profile default personal
+ai-skills profile link personal ~/dotfiles/tools/ai-skills/profiles/personal.yaml
 ai-skills add my-org/repo --profile work
 ```
 

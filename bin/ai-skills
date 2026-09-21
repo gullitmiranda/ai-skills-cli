@@ -1465,21 +1465,20 @@ cmd_doctor() {
 		local symlinks=0 real_dirs=0 broken=0
 		local real_dir_names=() broken_names=()
 
-		for entry in "$dir"/*/; do
-			[[ -e $entry || -L ${entry%/} ]] || continue
-			local entry_clean="${entry%/}"
-			if [[ -L $entry_clean ]]; then
-				local link_target
-				link_target="$(readlink "$entry_clean")"
-				if [[ -e $link_target ]]; then
+		# Use * not */ — a trailing slash skips dangling symlinks because
+		# bash only matches existing directories for that glob.
+		for entry in "$dir"/*; do
+			[[ -e $entry || -L ${entry} ]] || continue
+			if [[ -L $entry ]]; then
+				if [[ -e $entry && -d ${entry} ]]; then
 					symlinks=$((symlinks + 1))
-				else
+				elif [[ ! -e ${entry} ]]; then
 					broken=$((broken + 1))
-					broken_names+=("$(basename "$entry_clean")")
+					broken_names+=("$(basename "$entry")")
 				fi
-			elif [[ -d $entry_clean ]]; then
+			elif [[ -d $entry ]]; then
 				real_dirs=$((real_dirs + 1))
-				real_dir_names+=("$(basename "$entry_clean")")
+				real_dir_names+=("$(basename "$entry")")
 			fi
 		done
 
@@ -1729,11 +1728,15 @@ cmd_remove() {
 		skill_name="$(basename "$sid")"
 		local target="$dest/$skill_name"
 
-		if [[ -d $target ]]; then
+		if [[ -L ${target} || -d $target ]]; then
 			if $DRY_RUN; then
 				info "[dry-run] Would remove $target"
 			else
-				rm -rf "$target"
+				if [[ -L ${target} ]]; then
+					rm -f "${target}"
+				else
+					rm -rf "$target"
+				fi
 				info "Removed $(_bold "$skill_name") from $agent"
 			fi
 		fi

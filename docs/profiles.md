@@ -27,8 +27,8 @@ Skill repositories may live on different GitHub accounts (personal, work, org). 
     │   └── gullitmiranda/
     │       └── gullit-skills/
     └── work/                           # profile: work
-        └── cloudwalk/
-            └── tyrell-skills/
+        └── <org>/
+            └── <repo>-skills/
 ```
 
 Git credentials are routed by `includeIf` matching the repos path:
